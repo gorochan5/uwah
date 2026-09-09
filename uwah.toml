@@ -1,0 +1,4 @@
+token = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" # 123
+cache_dir = "d:/projects/rust/uwah/media"
+db_dir = "d:/projects/rust/uwah/uwah.db"
+# webhook_url = ""

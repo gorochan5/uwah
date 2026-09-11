@@ -1,11 +1,11 @@
 CREATE TABLE IF NOT EXISTS "sessions" (
-	"id" TEXT,
+	"id" TEXT NOT NULL,
 	"phone_number" TEXT,
 	"push_name" TEXT,
-	"status" TEXT NOT NULL DEFAULT 'INIT',
+	"status" TEXT NOT NULL DEFAULT 'QRCODE',
 	"qr_payload" TEXT,
-	"created_at" INTEGER NOT NULL,
-	"updated_at" INTEGER NOT NULL,
+	"created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	"updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY("id")
 );
 
@@ -20,8 +20,10 @@ CREATE TABLE IF NOT EXISTS "chats" (
 	"is_pinned" BOOLEAN NOT NULL DEFAULT 0,
 	"muted_until" INTEGER,
 	"last_message_at" INTEGER,
-	"created_at" INTEGER NOT NULL,
-	"updated_at" INTEGER NOT NULL,
+	"subject_owner" TEXT,
+	"subject_time" INTEGER,
+	"created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	"updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY("session_id", "jid"),
 	FOREIGN KEY ("session_id") REFERENCES "sessions"("id")
 	ON UPDATE NO ACTION ON DELETE CASCADE
@@ -33,8 +35,8 @@ CREATE TABLE IF NOT EXISTS "media_cache" (
 	"mime_type" TEXT NOT NULL,
 	"file_size" INTEGER NOT NULL,
 	"ref_count" INTEGER NOT NULL DEFAULT 1,
-	"last_accessed_at" INTEGER NOT NULL,
-	"created_at" INTEGER NOT NULL,
+	"last_accessed_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	"created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY("sha256")
 );
 
@@ -57,7 +59,7 @@ CREATE TABLE IF NOT EXISTS "messages" (
 	"delivery_status" TEXT NOT NULL,
 	"is_edited" BOOLEAN NOT NULL DEFAULT 0,
 	"is_deleted" BOOLEAN NOT NULL DEFAULT 0,
-	"timestamp" INTEGER NOT NULL,
+	"timestamp" TIMESTAMP NOT NULL,
 	PRIMARY KEY("id", "session_id"),
 	FOREIGN KEY ("session_id") REFERENCES "sessions"("id")
 	ON UPDATE NO ACTION ON DELETE CASCADE,
@@ -76,7 +78,10 @@ CREATE TABLE IF NOT EXISTS "contacts" (
 	"status_text" TEXT,
 	"profile_pic_url" TEXT,
 	"is_business" BOOLEAN NOT NULL DEFAULT 0,
-	"updated_at" INTEGER NOT NULL,
+	"username" TEXT,
+	"devices" TEXT,
+	"verified_name" TEXT,
+	"updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY("session_id", "jid"),
 	FOREIGN KEY ("session_id") REFERENCES "sessions"("id")
 	ON UPDATE NO ACTION ON DELETE CASCADE
@@ -88,7 +93,7 @@ CREATE TABLE IF NOT EXISTS "group_participants" (
 	"user_jid" TEXT NOT NULL,
 	-- 'member', 'admin', 'superadmin'.
 	"role" TEXT NOT NULL DEFAULT 'member',
-	"joined_at" INTEGER,
+	"joined_at" TIMESTAMP NOT NULL,
 	PRIMARY KEY("session_id", "group_jid", "user_jid"),
 	FOREIGN KEY ("session_id", "group_jid") REFERENCES "chats"("session_id", "jid")
 	ON UPDATE NO ACTION ON DELETE CASCADE
@@ -104,8 +109,8 @@ CREATE TABLE IF NOT EXISTS "calls" (
 	-- 'offered', 'accepted', 'rejected', 'ended', 'missed'.
 	"status" TEXT NOT NULL,
 	"duration_seconds" INTEGER,
-	"created_at" INTEGER NOT NULL,
-	"ended_at" INTEGER,
+	"created_at" TIMESTAMP NOT NULL,
+	"ended_at" TIMESTAMP,
 	PRIMARY KEY("id", "session_id"),
 	FOREIGN KEY ("session_id") REFERENCES "sessions"("id")
 	ON UPDATE NO ACTION ON DELETE CASCADE

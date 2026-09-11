@@ -9,7 +9,7 @@ pub struct Chat {
     pub jid: String,
     pub name: Option<String>,
     pub kind: String,
-    pub unread_count: i32,
+    pub unread_count: i64,
     pub is_archived: bool,
     pub is_pinned: bool,
     pub muted_until: Option<i64>,
@@ -31,7 +31,7 @@ mod tests {
             jid: "j".to_string(),
             name: None,
             kind: "direct".to_string(), // Must be String, not Option
-            unread_count: 0,
+            unread_count: 0i64,
             is_archived: false,
             is_pinned: false,
             muted_until: Some(123i64), // Must be Option<i64>

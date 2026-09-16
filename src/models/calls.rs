@@ -4,7 +4,7 @@ use sqlx::{FromRow, SqlitePool, sqlite::SqliteQueryResult};
 use tracing::info;
 
 #[derive(Serialize, Deserialize, FromRow, Debug, Clone)]
-pub struct Calls {
+pub struct Call {
     pub id: String,
     pub session_id: String,
     pub chat_jid: String,

@@ -1,27 +1,77 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::sync::OnceLock;
 use tracing::{error, info};
 
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Database {
+    pub dir: String,
+}
+
+impl Database {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.dir.trim().is_empty() {
+            return Err(format!("The 'dir' in [database] cannot be empty."));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Service {
+    pub host: String,
+    pub port: u16,
+    pub auth: String,
+}
+
+impl Service {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.host.trim().is_empty() {
+            return Err(format!("The 'host' in [service] cannot be empty."));
+        }
+        if self.auth.trim().is_empty() {
+            return Err(format!("The 'auth' in [service] cannot be empty."));
+        }
+        if self.port == 0 {
+            return Err(format!("The 'port' in [service] must be a valid port number."));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Media {
+    pub dir: String,
+}
+
+impl Media {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.dir.trim().is_empty() {
+            return Err(format!("The 'dir' in [media] cannot be empty."));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
-    pub token: String,
-    pub media_dir: String,
-    pub db_dir: String,
+    pub database: Database,
+    pub service: Service,
+    pub media: Media,
 }
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
-        if self.token.trim().is_empty() {
-            return Err(format!("The 'token' in [config.{}] cannot be empty.", path));
+        if let Err(err) = self.database.validate() {
+            return Err(format!("Invalid database config: {}", err));
         }
-        if self.media_dir.trim().is_empty() {
-            return Err(format!("The 'media_dir' in [config.{}] cannot be empty.", path));
+        if let Err(err) = self.service.validate() {
+            return Err(format!("Invalid service config: {}", err));
         }
-        if self.db_dir.trim().is_empty() {
-            return Err(format!("The 'db_dir' in [config.{}] cannot be empty.", path));
+        if let Err(err) = self.media.validate() {
+            return Err(format!("Invalid media config: {}", err));
         }
         Ok(())
     }
@@ -33,10 +83,6 @@ pub fn get() -> &'static Config {
     CONFIG
         .get()
         .expect("config::init() must be called before config::get()")
-}
-
-pub fn try_get() -> Option<&'static Config> {
-    CONFIG.get()
 }
 
 pub fn init() -> anyhow::Result<()> {

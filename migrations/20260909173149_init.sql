@@ -41,8 +41,8 @@ CREATE TABLE IF NOT EXISTS "media_cache" (
 );
 
 CREATE TABLE IF NOT EXISTS "messages" (
-	"id" TEXT NOT NULL,
 	"session_id" TEXT NOT NULL,
+	"id" TEXT NOT NULL,
 	"chat_jid" TEXT NOT NULL,
 	"sender_jid" TEXT NOT NULL,
 	-- ID da mensagem respondida (se houver)
@@ -100,8 +100,8 @@ CREATE TABLE IF NOT EXISTS "group_participants" (
 );
 
 CREATE TABLE IF NOT EXISTS "calls" (
-	"id" TEXT NOT NULL,
 	"session_id" TEXT NOT NULL,
+	"id" TEXT NOT NULL,
 	"chat_jid" TEXT NOT NULL,
 	"caller_jid" TEXT NOT NULL,
 	"is_video" BOOLEAN NOT NULL DEFAULT 0,

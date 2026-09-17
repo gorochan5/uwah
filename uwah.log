@@ -1,4 +1,0 @@
-2026-09-17T19:53:29.113831Z  INFO uwah: Starting Uwah WhatsApp Gateway...
-2026-09-17T19:53:29.114710Z  INFO uwah::config: Config file found in uwah.toml
-2026-09-17T19:53:29.126556Z  INFO uwah: Database pool successfully connected.
-2026-09-17T19:53:29.134862Z  INFO uwah: Uwah REST API listening on http://127.0.0.1:6767

@@ -1,12 +1,10 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool, sqlite::SqliteQueryResult};
-use tracing::info;
+use sqlx::FromRow;
 
 #[derive(Serialize, Deserialize, FromRow, Debug, Clone)]
 pub struct Call {
-    pub id: String,
     pub session_id: String,
+    pub id: String,
     pub chat_jid: String,
     pub caller_jid: String,
     pub is_video: bool,

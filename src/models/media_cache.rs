@@ -1,7 +1,5 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool, sqlite::SqliteQueryResult};
-use tracing::info;
+use sqlx::FromRow;
 
 #[derive(Serialize, Deserialize, FromRow, Debug, Clone)]
 pub struct MediaCache {

@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, QueryBuilder, SqlitePool, sqlite::SqliteQueryResult};
+use sqlx::sqlite::SqliteQueryResult;
 use tracing::info;
 
 type Session = crate::models::sessions::Session;
@@ -21,6 +20,7 @@ pub async fn get_all() -> Result<Vec<Session>> {
             created_at AS "created_at!: chrono::DateTime<chrono::Utc>",
             updated_at AS "updated_at!: chrono::DateTime<chrono::Utc>"
         FROM sessions
+        ORDER BY created_at DESC
         "#
     )
     .fetch_all(pool)
@@ -79,7 +79,7 @@ pub async fn create(id: &str) -> Result<SqliteQueryResult> {
     .context("Failed to create new session on DB")
 }
 
-pub async fn delete(id: &str) -> Result<SqliteQueryResult>  {
+pub async fn delete(id: &str) -> Result<SqliteQueryResult> {
     info!(
         session_id = id,
         "Deleting session in DB"
@@ -104,8 +104,7 @@ pub async fn auth(session: Session) -> Result<SqliteQueryResult> {
         phone_number = session.phone_number,
         push_name = session.push_name,
         status = session.status,
-        qr_payload = session.qr_payload,
-        "Updating session in DB"
+        "Updating session in DB as authenticated"
     );
 
     let pool = crate::database::get();
@@ -122,7 +121,7 @@ pub async fn auth(session: Session) -> Result<SqliteQueryResult> {
         "#,
         session.phone_number,
         session.push_name,
-        "OK",
+        "CONNECTED",
         None::<String>,
         session.id
     )
@@ -143,6 +142,7 @@ pub async fn refresh_qr(id: &str, qr_payload: &str) -> Result<SqliteQueryResult>
         r#"
         UPDATE sessions
         SET qr_payload = $1,
+            status = 'QRCODE',
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
         "#,

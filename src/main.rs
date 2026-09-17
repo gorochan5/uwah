@@ -1,40 +1,40 @@
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
-use std::{env, error::Error, net::SocketAddr, sync::Arc};
-use crate::database::{self, init};
+#![allow(dead_code)]
+
+use std::{error::Error, sync::Arc};
+use tracing::info;
+
+mod api;
+mod config;
+mod database;
 mod log;
 mod models;
 mod repository;
-mod routes;
 mod security;
-mod config;
-mod api;
-mod database;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let _guard = crate::log::init();
+    info!("Starting Uwah WhatsApp Gateway...");
 
-    let args = env::args().collect::<Vec<String>>();
-    match args.get(1).
+    crate::config::init()?;
+    let config = crate::config::get();
 
-    init(token)
+    let pool = crate::database::init().await?;
+    info!("Database pool successfully connected.");
 
-    let db = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await?;
+    let session_manager = Arc::new(crate::api::session_manager::SessionManager::new(&config.sessions.dir));
+    let state = Arc::new(crate::api::http::state::AppState::new(pool, config, session_manager));
+    let app = crate::api::http::create_router(state);
 
-    db::initialize(&db).await?;
-    auth::ensure_admin_token(&db).await?;
+    let host = if config.service.host == "localhost" {
+        "127.0.0.1"
+    } else {
+        &config.service.host
+    };
+    let bind_addr = format!("{}:{}", host, config.service.port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    info!("Uwah REST API listening on http://{}", bind_addr);
 
-    let app = routes::router(state);
-
-    let address: SocketAddr = env::var("BIND_ADDR")
-        .unwrap_or_else(|_| "127.0.0.1:5855".to_owned())
-        .parse()?;
-    let listener = tokio::net::TcpListener::bind(address).await?;
-
-    eprintln!("kronos_kpis is listening on http://{address}");
-    eprintln!("On first launch, the generated administrator token is saved in token.txt.");
     axum::serve(listener, app).await?;
 
     Ok(())

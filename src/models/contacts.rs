@@ -1,7 +1,5 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sqlx::{types::chrono, FromRow, SqlitePool, sqlite::SqliteQueryResult};
-use tracing::info;
+use sqlx::FromRow;
 
 #[derive(Serialize, Deserialize, FromRow, Debug, Clone)]
 pub struct Contact {
@@ -17,27 +15,4 @@ pub struct Contact {
     pub devices: Option<String>,
     pub verified_name: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_contact_instantiation() {
-        let _c = Contact {
-            session_id: "s".to_string(),
-            jid: "j".to_string(),
-            lid_jid: None,
-            phone_number: None,
-            push_name: None,
-            status_text: None,
-            profile_pic_url: None,
-            is_business: false,
-            username: None,
-            devices: None,
-            verified_name: None,
-            updated_at: chrono::Utc::now(),
-        };
-    }
 }

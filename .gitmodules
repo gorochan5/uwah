@@ -1,0 +1,3 @@
+[submodule "agent_team"]
+	path = agent_team
+	url = https://github.com/eusebioleite/agent_team

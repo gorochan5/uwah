@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, QueryBuilder, SqlitePool, sqlite::SqliteQueryResult};
+use sqlx::sqlite::SqliteQueryResult;
 use tracing::info;
 
 type MediaCache = crate::models::media_cache::MediaCache;
@@ -28,9 +27,9 @@ pub async fn get_all() -> Result<Vec<MediaCache>> {
     .context("Failed to fetch media cache entries from DB")
 }
 
-pub async fn get_one(id: &str) -> Result<Option<MediaCache>> {
+pub async fn get_one(sha256: &str) -> Result<Option<MediaCache>> {
     info!(
-        media_id = id,
+        media_sha256 = sha256,
         "Fetching media cache entry from DB"
     );
     
@@ -49,16 +48,17 @@ pub async fn get_one(id: &str) -> Result<Option<MediaCache>> {
         FROM media_cache
         WHERE sha256 = $1
         "#,
-        id
+        sha256
     )
     .fetch_optional(pool)
     .await
     .context("Failed to fetch media cache entry from DB")
 }
 
-pub async fn create(id: &str) -> Result<SqliteQueryResult> {
+pub async fn create(sha256: &str, disk_path: &str, mime_type: &str, file_size: i64) -> Result<SqliteQueryResult> {
     info!(
-        media_id = id,
+        media_sha256 = sha256,
+        disk_path = disk_path,
         "Creating media cache entry in DB"
     );
 
@@ -66,22 +66,28 @@ pub async fn create(id: &str) -> Result<SqliteQueryResult> {
     sqlx::query!(
         r#"
         INSERT INTO media_cache ( 
-                sha256
-            )
+            sha256,
+            disk_path,
+            mime_type,
+            file_size
+        )
         VALUES (
-                $1
-            )
+            $1, $2, $3, $4
+        )
         "#,
-        id
+        sha256,
+        disk_path,
+        mime_type,
+        file_size
     )
     .execute(pool)
     .await
     .context("Failed to create new media cache entry on DB")
 }
 
-pub async fn delete(id: &str) -> Result<SqliteQueryResult>  {
+pub async fn delete(sha256: &str) -> Result<SqliteQueryResult> {
     info!(
-        media_id = id,
+        media_sha256 = sha256,
         "Deleting media cache entry in DB"
     );
 
@@ -91,7 +97,7 @@ pub async fn delete(id: &str) -> Result<SqliteQueryResult>  {
         DELETE FROM media_cache
         WHERE sha256 = $1
         "#,
-        id,
+        sha256
     )
     .execute(pool)
     .await

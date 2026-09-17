@@ -1,7 +1,5 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use sqlx::{types::chrono, FromRow, SqlitePool, sqlite::SqliteQueryResult};
-use tracing::info;
+use sqlx::FromRow;
 
 #[derive(Serialize, Deserialize, FromRow, Debug, Clone)]
 pub struct Chat {
@@ -16,6 +14,6 @@ pub struct Chat {
     pub last_message_at: Option<i64>,
     pub subject_owner: Option<String>,
     pub subject_time: Option<i64>,
-    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }

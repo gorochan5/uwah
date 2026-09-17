@@ -4,7 +4,10 @@ dir = "d:/projects/rust/uwah/uwah.db"
 [service]
 host = "localhost"
 port = 6767
-auth = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" # 123
+auth = "123"
 
 [media]
 dir = "d:/projects/rust/uwah/media"
+
+[sessions]
+dir = "d:/projects/rust/uwah/sessions"

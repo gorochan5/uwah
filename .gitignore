@@ -1,1 +1,5 @@
 /target
+uwah.db
+uwah.log
+uwah.db-wal
+uwah.db-shm

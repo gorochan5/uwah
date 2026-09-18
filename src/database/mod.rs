@@ -22,6 +22,7 @@ pub async fn init() -> Result<SqlitePool> {
     .foreign_keys(true)
     .journal_mode(SqliteJournalMode::Wal)
     .synchronous(SqliteSynchronous::Normal)
+    .busy_timeout(std::time::Duration::from_secs(30))
     .create_if_missing(true);
 
     let db = SqlitePoolOptions::new()

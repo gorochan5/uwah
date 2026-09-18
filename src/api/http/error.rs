@@ -15,15 +15,17 @@ pub enum AppError {
     Internal(anyhow::Error),
 }
 
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: ErrorDetail,
+use utoipa::ToSchema;
+
+#[derive(Serialize, ToSchema)]
+pub struct ErrorResponse {
+    pub error: ErrorDetail,
 }
 
-#[derive(Serialize)]
-struct ErrorDetail {
-    code: &'static str,
-    message: String,
+#[derive(Serialize, ToSchema)]
+pub struct ErrorDetail {
+    pub code: &'static str,
+    pub message: String,
 }
 
 impl std::fmt::Display for AppError {

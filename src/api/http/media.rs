@@ -7,11 +7,28 @@ use axum::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use crate::api::http::{
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, ErrorResponse},
     state::AppState,
 };
 use crate::repository::media_cache as repo;
 
+#[utoipa::path(
+    get,
+    path = "/sessions/{id}/media/{sha256}",
+    tag = "Media",
+    summary = "Retrieve cached media binary",
+    description = "Streams cached media file (image, audio, document, video) by SHA-256 hash from local disk cache.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("sha256" = String, Path, description = "Media SHA-256 hash (64 hex characters)")
+    ),
+    responses(
+        (status = 200, description = "Media file binary content", content_type = "application/octet-stream"),
+        (status = 400, description = "Invalid SHA-256 hash parameter", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Media not found in database or disk", body = ErrorResponse)
+    )
+)]
 pub async fn get_media(
     State(state): State<Arc<AppState>>,
     Path((_session_id, sha256)): Path<(String, String)>,

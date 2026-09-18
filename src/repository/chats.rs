@@ -129,6 +129,24 @@ pub async fn create(jid: &str, session_id: &str) -> Result<SqliteQueryResult> {
     .context("Failed to create new chat on DB")
 }
 
+pub async fn ensure_exists(jid: &str, session_id: &str) -> Result<()> {
+    let pool = crate::database::get();
+    sqlx::query!(
+        r#"
+        INSERT INTO chats (jid, session_id)
+        VALUES ($1, $2)
+        ON CONFLICT(session_id, jid) DO NOTHING
+        "#,
+        jid,
+        session_id
+    )
+    .execute(pool)
+    .await
+    .context("Failed to ensure chat exists in DB")?;
+
+    Ok(())
+}
+
 pub async fn delete(jid: &str, session_id: &str) -> Result<SqliteQueryResult> {
     info!(
         chat_jid = jid,

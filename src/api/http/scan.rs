@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::api::http::{
-    error::{AppError, AppResult},
+    error::{AppError, AppResult, ErrorResponse},
     state::AppState,
 };
 use crate::models::sessions::Session;
@@ -55,6 +55,21 @@ fn check_auth(state: &AppState, query_token: Option<&str>, headers: &HeaderMap) 
 
 /// GET /sessions/{id}/scan
 /// Full standalone HTML page with HTMX polling container.
+#[utoipa::path(
+    get,
+    path = "/sessions/{id}/scan",
+    tag = "Sessions",
+    summary = "Render interactive QR pairing page",
+    description = "Renders a responsive Maud + HTMX HTML page that displays and auto-refreshes the WhatsApp pairing QR code.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("token" = Option<String>, Query, description = "Authentication token when opening directly in a browser")
+    ),
+    responses(
+        (status = 200, description = "Standalone HTML pairing page with HTMX live QR updates", content_type = "text/html"),
+        (status = 404, description = "Session not found", body = ErrorResponse)
+    )
+)]
 pub async fn scan_page(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,

@@ -21,6 +21,8 @@ tower = { version = "0.5.3", features = ["full"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter", "local-time", "fmt"] }
+utoipa = { version = "5.5.0", features = ["chrono"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 whatsapp-rust = "0.7.0"
 
 [build-dependencies]

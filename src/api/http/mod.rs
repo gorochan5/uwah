@@ -6,6 +6,7 @@ pub mod group_participants;
 pub mod health;
 pub mod media;
 pub mod messages;
+pub mod openapi;
 pub mod scan;
 pub mod sessions;
 pub mod state;
@@ -16,7 +17,9 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
-use crate::api::http::state::AppState;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+use crate::api::http::{openapi::ApiDoc, state::AppState};
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     let public_routes = Router::new()
@@ -25,6 +28,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let view_routes = Router::new()
         .route("/sessions/{id}/scan", get(scan::scan_page))
         .route("/sessions/{id}/qr-frame", get(scan::qr_frame));
+
+    let swagger_router: Router<Arc<AppState>> = SwaggerUi::new("/swagger")
+        .url("/api-docs/openapi.json", ApiDoc::openapi())
+        .into();
+
+    let protected_swagger = swagger_router.layer(middleware::from_fn_with_state(
+        state.clone(),
+        crate::security::swagger_auth_middleware,
+    ));
 
     let protected_routes = Router::new()
         // Sessions
@@ -58,5 +70,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(public_routes)
         .merge(view_routes)
         .merge(protected_routes)
+        .merge(protected_swagger)
         .with_state(state)
 }

@@ -149,6 +149,10 @@ pub async fn create(message: &Message) -> Result<SqliteQueryResult> {
         VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
         )
+        ON CONFLICT(id, session_id) DO UPDATE SET
+            delivery_status = excluded.delivery_status,
+            is_edited = excluded.is_edited,
+            body = COALESCE(excluded.body, messages.body)
         "#,
         message.id,
         message.session_id,

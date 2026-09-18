@@ -14,7 +14,9 @@ use crate::models::contacts::Contact;
 use crate::repository::contacts as repo;
 use crate::repository::sessions as session_repo;
 
-#[derive(Deserialize)]
+use utoipa::ToSchema;
+
+#[derive(Deserialize, ToSchema)]
 pub struct UpsertContactRequest {
     pub jid: String,
     pub lid_jid: Option<String>,
@@ -28,16 +30,34 @@ pub struct UpsertContactRequest {
     pub verified_name: Option<String>,
 }
 
-#[derive(Deserialize)]
+use crate::api::http::error::ErrorResponse;
+
+#[derive(Deserialize, ToSchema)]
 pub struct SyncContactsRequest {
     pub contacts: Vec<UpsertContactRequest>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct SyncContactsResponse {
     pub synced_count: usize,
 }
 
+#[utoipa::path(
+    get,
+    path = "/sessions/{id}/contacts",
+    tag = "Contacts",
+    summary = "List contacts",
+    description = "Retrieves all synced contacts for the specified session.",
+    params(
+        ("id" = String, Path, description = "Session identifier")
+    ),
+    responses(
+        (status = 200, description = "List of contacts", body = Vec<Contact>),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse)
+    )
+)]
 pub async fn list_contacts(
     State(_state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -50,6 +70,23 @@ pub async fn list_contacts(
     Ok(Json(contacts))
 }
 
+#[utoipa::path(
+    get,
+    path = "/sessions/{id}/contacts/{jid}",
+    tag = "Contacts",
+    summary = "Get contact",
+    description = "Retrieves a contact by JID for the specified session.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Contact WhatsApp JID")
+    ),
+    responses(
+        (status = 200, description = "Contact details", body = Contact),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Contact or session not found", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse)
+    )
+)]
 pub async fn get_contact(
     State(_state): State<Arc<AppState>>,
     Path((session_id, jid)): Path<(String, String)>,
@@ -65,6 +102,23 @@ pub async fn get_contact(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/contacts",
+    tag = "Contacts",
+    summary = "Upsert contact",
+    description = "Creates or updates a single contact record in local storage.",
+    params(
+        ("id" = String, Path, description = "Session identifier")
+    ),
+    request_body = UpsertContactRequest,
+    responses(
+        (status = 200, description = "Contact upserted successfully", body = Contact),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
 pub async fn upsert_contact(
     State(_state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -98,6 +152,23 @@ pub async fn upsert_contact(
     Ok((StatusCode::OK, Json(saved)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/contacts/sync",
+    tag = "Contacts",
+    summary = "Sync contacts in bulk",
+    description = "Batch synchronizes contacts into local storage for the specified session.",
+    params(
+        ("id" = String, Path, description = "Session identifier")
+    ),
+    request_body = SyncContactsRequest,
+    responses(
+        (status = 200, description = "Batch sync summary", body = SyncContactsResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse)
+    )
+)]
 pub async fn sync_contacts(
     State(_state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
@@ -129,6 +200,23 @@ pub async fn sync_contacts(
     Ok((StatusCode::OK, Json(SyncContactsResponse { synced_count: count })))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/sessions/{id}/contacts/{jid}",
+    tag = "Contacts",
+    summary = "Delete contact",
+    description = "Deletes a contact record from local storage.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Contact WhatsApp JID")
+    ),
+    responses(
+        (status = 204, description = "Contact deleted successfully"),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Contact not found", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse)
+    )
+)]
 pub async fn delete_contact(
     State(_state): State<Arc<AppState>>,
     Path((session_id, jid)): Path<(String, String)>,

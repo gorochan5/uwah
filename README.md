@@ -1,179 +1,174 @@
 # uwah
 
-> **Unified WhatsApp Hub** — a self-hosted WhatsApp gateway that manages multiple sessions and exposes a dual REST + gRPC API.
+> **Unified WhatsApp Hub** — a self-hosted, high-performance WhatsApp gateway that manages multiple sessions and exposes an interactive REST API, dynamic web portal, and gRPC interface.
 
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange?logo=rust)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Status: Experimental](https://img.shields.io/badge/status-experimental-yellow)]()
+[![Swagger](https://img.shields.io/badge/swagger-OpenAPI%203.1-brightgreen)](http://127.0.0.1:6767/swagger?key=123)
+[![Status: Active](https://img.shields.io/badge/status-active%20development-blue)]()
 
 ---
 
-## Overview
+## 🚀 Key Highlights
 
-**uwah** wraps [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust) and turns it into a production-ready service.
-It lets you connect **multiple WhatsApp accounts** (sessions) and interact with all of them through a single, unified API — either REST/HTTP or gRPC with real-time streaming.
-
-**Key traits:**
-
-- 🔗 **Multi-session** — manage many WhatsApp numbers at once
-- ⚡ **Dual API** — REST for CRUD operations, gRPC for streaming events (messages, calls, QR codes, status updates)
-- 🗄️ **SQLite persistence** — messages, chats, contacts, calls, groups and media cache stored locally
-- 🔒 **Token auth** — SHA-256 bearer token configured via `uwah.toml`
-- 🦀 **Pure Rust** — built on Tokio, Axum and Tonic
+- 🔗 **Multi-Session Isolation** — Each WhatsApp account runs its own background bot worker with isolated Signal protocol storage (`sessions/{id}.db`).
+- ⚡ **Instant Messaging & Quotes** — Real-time outbound message dispatch and inbound message interception with full **quoted reply** (`quoted_message_id`) context support.
+- 📱 **Zero-Dependency QR Portal** — Pure vector SVG QR code rendering via **Maud + HTMX** (`/sessions/:id/scan?token=123`) without page refreshes or external image crates.
+- 📖 **Interactive Swagger UI** — Built-in OpenAPI 3.1 interface at `/swagger?key=123` powered by `utoipa` and `utoipa-swagger-ui`.
+- 🗄️ **Hardened SQLite Concurrency** — Application database (`uwah.db`) operating in WAL mode with `busy_timeout(30s)` and idempotent upserts to eliminate lock contention.
+- 🔒 **Dual-Mode Security** — Authenticates via `Authorization: Bearer <token>` or browser query string (`?key=<token>` / `?token=<token>`), supporting plaintext or SHA-256 hash matching.
 
 ---
 
-## Architecture
+## 🏛️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                     uwah                            │
-│                                                     │
-│  ┌─────────────┐         ┌───────────────────────┐  │
-│  │  REST / HTTP│         │  gRPC (Tonic)         │  │
-│  │   (Axum)   │         │  + server-side stream  │  │
-│  └──────┬──────┘         └──────────┬────────────┘  │
-│         │                           │               │
-│         └─────────────┬─────────────┘               │
-│                       ▼                             │
-│              ┌─────────────────┐                    │
-│              │  Session Manager│                    │
-│              └────────┬────────┘                    │
-│                       │                             │
-│              ┌────────▼────────┐                    │
-│              │  whatsapp-rust  │                    │
-│              └────────┬────────┘                    │
-│                       │                             │
-│              ┌────────▼────────┐                    │
-│              │   SQLite (sqlx) │                    │
-│              └─────────────────┘                    │
-└─────────────────────────────────────────────────────┘
-                        │
-                        ▼
-               WhatsApp Network
+                      ┌────────────────────────────┐
+                      │    HTTP Clients / Browsers │
+                      └─────────────┬──────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                              Axum 0.8                                  │
+│  ┌─────────────────────────┬───────────────────┬────────────────────┐  │
+│  │   Protected REST API    │   Maud + HTMX     │     Swagger UI     │  │
+│  │  (/sessions, /chats...) │ (/sessions/:id/   │   (/swagger?key=)  │  │
+│  │  (Bearer Auth Token)    │      scan)        │   (OpenAPI 3.1)    │  │
+│  └────────────┬────────────┴─────────┬─────────┴──────────┬─────────┘  │
+│               │                      │                    │            │
+│               └──────────────────────┼────────────────────┘            │
+│                                      ▼                                 │
+│                         ┌─────────────────────────┐                    │
+│                         │        AppState         │                    │
+│                         │ - &'static Config       │                    │
+│                         │ - SqlitePool (uwah.db)  │                    │
+│                         │ - Arc<SessionManager>   │                    │
+│                         └────────────┬────────────┘                    │
+└──────────────────────────────────────┼─────────────────────────────────┘
+                                       │
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        SessionManager Layer                            │
+│           (Registry of Active WhatsApp Bots: HashMap<ID, Arc<Client>>)  │
+│                                                                        │
+│   ┌──────────────────────────┐        ┌──────────────────────────┐     │
+│   │    WhatsApp Session A    │        │    WhatsApp Session B    │     │
+│   │   - Bot / Client Worker  │        │   - Bot / Client Worker  │     │
+│   │   - Background Tokio Task│        │   - Background Tokio Task│     │
+│   │   - on_message handler   │        │   - on_message handler   │     │
+│   │   - on_qr_code handler   │        │   - on_qr_code handler   │     │
+│   │   - on_connected handler │        │   - on_connected handler │     │
+│   └────────────┬─────────────┘        └────────────┬─────────────┘     │
+└────────────────┼───────────────────────────────────┼───────────────────┘
+                 │                                   │
+                 ▼                                   ▼
+      ┌─────────────────────┐             ┌─────────────────────┐
+      │  sessions/{id_a}.db │             │  sessions/{id_b}.db │
+      │ (Signal Keys Store) │             │ (Signal Keys Store) │
+      └─────────────────────┘             └─────────────────────┘
+                 │                                   │
+                 └─────────────────┬─────────────────┘
+                                   ▼
+                         ┌───────────────────┐
+                         │      uwah.db      │
+                         │(Gateway App State)│
+                         └───────────────────┘
 ```
+
+Detailed technical breakdown available in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## Configuration
+## ⚙️ Configuration (`uwah.toml`)
 
-uwah is configured via a `uwah.toml` file:
+Uwah is configured through a clean `uwah.toml` file at the root:
 
 ```toml
 [database]
-# Path to the SQLite database file
-dir = "/path/to/uwah.db"
+# Path to the application state SQLite database
+dir = "d:/projects/rust/uwah/uwah.db"
 
 [service]
 host = "localhost"
 port = 6767
-# SHA-256 of your auth token
-auth = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+# Plaintext token (e.g. "123") OR SHA-256 hex digest
+auth = "123"
 
 [media]
-# Directory where media files will be cached on disk
-dir = "/path/to/media"
+# Directory where downloaded media files are cached
+dir = "d:/projects/rust/uwah/media"
+
+[sessions]
+# Directory where per-session Signal stores are maintained
+dir = "d:/projects/rust/uwah/sessions"
 ```
 
 ---
 
-## REST API
+## 📖 Swagger UI
 
-> **Note:** The REST API is under active development. Endpoints marked with 🚧 are planned but not yet implemented.
+Access the interactive API explorer directly in your browser:
 
-All requests require an `Authorization: Bearer <token>` header.
-Base URL: `http://<host>:<port>`
+👉 **`http://127.0.0.1:6767/swagger?key=123`**
 
-### Sessions
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions` | List all sessions |
-| `POST` | `/sessions` | Create a new session |
-| `GET` | `/sessions/:id` | Get session details + QR code payload |
-| `PATCH` | `/sessions/:id` | Rename a session |
-| `DELETE` | `/sessions/:id` | Delete a session |
-
-### Chats
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions/:id/chats` | List all chats for a session |
-| `GET` | `/sessions/:id/chats/:jid` | Get a specific chat |
-
-### Messages
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions/:id/chats/:jid/messages` | List messages in a chat |
-| `POST` | `/sessions/:id/chats/:jid/messages` 🚧 | Send a message |
-| `DELETE` | `/sessions/:id/chats/:jid/messages/:msg_id` 🚧 | Delete a message |
-
-### Contacts
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions/:id/contacts` | List contacts |
-| `GET` | `/sessions/:id/contacts/:jid` | Get contact details |
-
-### Groups
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions/:id/chats/:jid/participants` | List group participants |
-
-### Calls
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions/:id/calls` | List call history |
-
-### Media
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/sessions/:id/media/:sha256` 🚧 | Retrieve a cached media file |
-
-### Health
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Service health check |
+You can inspect models, test request parameters, and execute live endpoints directly from the UI.
 
 ---
 
-## gRPC & Streaming
+## 📱 Pairing a Device (Maud + HTMX QR Scanner)
 
-uwah exposes a gRPC server (powered by [Tonic](https://github.com/hyperium/tonic)) for **real-time event streaming**.
-
-Instead of polling the REST API, consumers can open a single gRPC stream per session and receive events as they happen:
-
-- 📩 Incoming & outgoing messages
-- 📞 Call events (`offered`, `accepted`, `ended`, `missed`)
-- 🔄 QR code refreshes (during session setup)
-- 👥 Group membership changes
-- ✅ Message delivery status updates (`sent` → `delivered` → `read`)
-
-> The `.proto` schema is currently being defined. It will live in the `proto/` directory.
-
----
-
-## Data Model
-
-uwah persists the following entities in SQLite:
-
-| Entity | Key fields |
-|--------|-----------|
-| `Session` | `id`, `phone_number`, `push_name`, `status` (`QRCODE` / `OK`) |
-| `Chat` | `jid`, `kind` (`direct` / `group` / `newsletter` / `broadcast`) |
-| `Message` | `id`, `message_type`, `body`, `delivery_status`, `is_edited`, `is_deleted` |
-| `Contact` | `jid`, `push_name`, `is_business` |
-| `GroupParticipant` | `user_jid`, `role` (`member` / `admin` / `superadmin`) |
-| `Call` | `id`, `is_video`, `status` (`offered` / `accepted` / `ended` / `missed`) |
-| `MediaCache` | `sha256`, `disk_path`, `mime_type`, `ref_count` |
+1. Create a session via REST:
+   ```bash
+   curl -X POST http://127.0.0.1:6767/sessions \
+     -H "Authorization: Bearer 123" \
+     -H "Content-Type: application/json" \
+     -d '{"id": "minha-sessao"}'
+   ```
+2. Open the reactive scan portal in your browser:
+   👉 **`http://127.0.0.1:6767/sessions/minha-sessao/scan?token=123`**
+3. Scan the QR code using your WhatsApp phone app (**Linked Devices** $\rightarrow$ **Link a Device**).
+4. The page immediately transitions to a green status card (*"Session Connected"*), and the gateway is ready to send and receive messages!
 
 ---
 
-## License
+## 💬 Sending Messages
+
+Send a real-time message to any phone number or group:
+
+```bash
+curl -X POST http://127.0.0.1:6767/sessions/minha-sessao/chats/5519998005388/messages \
+  -H "Authorization: Bearer 123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "body": "Olá mundo via Uwah Gateway!"
+  }'
+```
+
+### Quoting / Replying to a Message
+
+To quote an existing message, pass `quoted_message_id`:
+
+```bash
+curl -X POST http://127.0.0.1:6767/sessions/minha-sessao/chats/5519998005388/messages \
+  -H "Authorization: Bearer 123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "body": "Essa é uma resposta citando a mensagem anterior!",
+    "quoted_message_id": "3EB0C44298FC1C14"
+  }'
+```
+
+---
+
+## 📚 Documentation Index
+
+For in-depth guides, consult the dedicated documentation files:
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System internals, dual-database design, and event loop lifecycles.
+- [docs/API.md](docs/API.md) — Complete REST endpoint reference and request/response specifications.
+- [docs/DATABASE.md](docs/DATABASE.md) — Schema definitions, indexing, WAL configuration, and SQLite concurrency tuning.
+
+---
+
+## 📄 License
 
 [MIT](./LICENSE) © uwah contributors

@@ -1,7 +1,9 @@
 use anyhow::Result;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
-use std::sync::OnceLock;
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 static SQLITE_POOL: OnceLock<SqlitePool> = OnceLock::new();
 
@@ -29,6 +31,18 @@ pub async fn init() -> Result<SqlitePool> {
         .max_connections(5)
         .connect_with(options)
         .await?;
+
+    tracing::info!("Running database migrations on uwah.db");
+    if let Err(err) = sqlx::migrate!("./migrations").run(&db).await {
+        tracing::error!(
+            error = %err,
+            "Database migration failed! If a migration file was edited after being applied, \
+            rebuild the binary with 'cargo build' to update the compiled-in checksum, \
+            or reset the dev database."
+        );
+        return Err(err.into());
+    }
+    tracing::info!("Database migrations applied successfully");
 
     let _ = SQLITE_POOL.set(db.clone());
 

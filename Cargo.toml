@@ -6,15 +6,22 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8.9"
+base64 = "0.22"
 chrono = { version = "0.4.45", features = ["serde"] }
+hex = "0.4"
+hmac = "0.13"
 maud = { version = "0.27.0", features = ["axum"] }
 nu-ansi-term = "0.50.3"
 prost = "0.14.4"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0"
 sha2 = "0.11.0"
-sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "chrono"] }
+sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "chrono", "migrate"] }
+subtle = "2.6"
 tokio = { version = "1.53.1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 toml = "1.1.5"
 tonic = "0.14.6"
 tower = { version = "0.5.3", features = ["full"] }

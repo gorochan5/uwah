@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 
@@ -10,6 +10,7 @@ pub enum AppError {
     NotFound(String),
     BadRequest(String),
     Unauthorized,
+    Forbidden(String),
     Conflict(String),
     Database(sqlx::Error),
     Internal(anyhow::Error),
@@ -34,6 +35,7 @@ impl std::fmt::Display for AppError {
             AppError::NotFound(msg) => write!(f, "Not found: {}", msg),
             AppError::BadRequest(msg) => write!(f, "Bad request: {}", msg),
             AppError::Unauthorized => write!(f, "Unauthorized"),
+            AppError::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
             AppError::Conflict(msg) => write!(f, "Conflict: {}", msg),
             AppError::Database(err) => write!(f, "Database error: {}", err),
             AppError::Internal(err) => write!(f, "Internal error: {}", err),
@@ -65,6 +67,7 @@ impl IntoResponse for AppError {
                 "UNAUTHORIZED",
                 "Missing or invalid Bearer token".to_string(),
             ),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN", msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
             AppError::Database(err) => {
                 tracing::error!(error = %err, "Database error");
@@ -93,4 +96,3 @@ impl IntoResponse for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
-

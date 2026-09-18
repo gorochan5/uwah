@@ -54,14 +54,18 @@ pub async fn get_by_group(session_id: &str, group_jid: &str) -> Result<Vec<Group
     .context("Failed to fetch group participants from DB")
 }
 
-pub async fn get_one(session_id: &str, group_jid: &str, user_jid: &str) -> Result<Option<GroupParticipant>> {
+pub async fn get_one(
+    session_id: &str,
+    group_jid: &str,
+    user_jid: &str,
+) -> Result<Option<GroupParticipant>> {
     info!(
         session_id = session_id,
         group_jid = group_jid,
         user_jid = user_jid,
         "Fetching group participant from DB"
     );
-    
+
     let pool = crate::database::get();
     sqlx::query_as!(
         GroupParticipant,
@@ -119,7 +123,11 @@ pub async fn create(participant: &GroupParticipant) -> Result<SqliteQueryResult>
     .context("Failed to create new group participant on DB")
 }
 
-pub async fn delete(session_id: &str, group_jid: &str, user_jid: &str) -> Result<SqliteQueryResult> {
+pub async fn delete(
+    session_id: &str,
+    group_jid: &str,
+    user_jid: &str,
+) -> Result<SqliteQueryResult> {
     info!(
         session_id = session_id,
         group_jid = group_jid,
@@ -142,4 +150,54 @@ pub async fn delete(session_id: &str, group_jid: &str, user_jid: &str) -> Result
     .execute(pool)
     .await
     .context("Failed to delete group participant from DB")
+}
+
+pub async fn upsert(participant: &GroupParticipant) -> Result<SqliteQueryResult> {
+    // Defensively ensure parent group chat exists
+    crate::repository::chats::ensure_exists(&participant.group_jid, &participant.session_id)
+        .await?;
+
+    let pool = crate::database::get();
+    sqlx::query!(
+        r#"
+        INSERT INTO group_participants (session_id, group_jid, user_jid, role, joined_at)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT(session_id, group_jid, user_jid) DO UPDATE SET
+            role = excluded.role,
+            joined_at = MIN(group_participants.joined_at, excluded.joined_at)
+        "#,
+        participant.session_id,
+        participant.group_jid,
+        participant.user_jid,
+        participant.role,
+        participant.joined_at
+    )
+    .execute(pool)
+    .await
+    .context("Failed to upsert group participant in DB")
+}
+
+pub async fn update_role(
+    session_id: &str,
+    group_jid: &str,
+    user_jid: &str,
+    role: &str,
+) -> Result<()> {
+    let pool = crate::database::get();
+    sqlx::query!(
+        r#"
+        UPDATE group_participants
+        SET role = $1
+        WHERE session_id = $2 AND group_jid = $3 AND user_jid = $4
+        "#,
+        role,
+        session_id,
+        group_jid,
+        user_jid
+    )
+    .execute(pool)
+    .await
+    .context("Failed to update group participant role in DB")?;
+
+    Ok(())
 }

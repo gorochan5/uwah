@@ -6,6 +6,7 @@ use tracing::info;
 mod api;
 mod config;
 mod database;
+pub mod events;
 mod log;
 mod models;
 mod repository;
@@ -22,8 +23,14 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let pool = crate::database::init().await?;
     info!("Database pool successfully connected.");
 
-    let session_manager = Arc::new(crate::api::session_manager::SessionManager::new(&config.sessions.dir));
-    let state = Arc::new(crate::api::http::state::AppState::new(pool, config, session_manager));
+    let session_manager = Arc::new(crate::api::session_manager::SessionManager::new(
+        &config.sessions.dir,
+    ));
+    let state = Arc::new(crate::api::http::state::AppState::new(
+        pool,
+        config,
+        session_manager,
+    ));
     let app = crate::api::http::create_router(state);
 
     let host = if config.service.host == "localhost" {

@@ -1,29 +1,73 @@
+use crate::api::http::{error::AppError, state::AppState};
 use axum::{
     extract::{Request, State},
     http::header::AUTHORIZATION,
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use crate::api::http::{error::AppError, state::AppState};
+use subtle::ConstantTimeEq;
 
+pub type HmacSha256 = Hmac<Sha256>;
+
+pub const SIGNATURE_HEADER: &str = "X-Uwah-Signature";
+
+/// Compares two byte slices in constant time.
+/// Returns false if lengths differ without leaking timing information.
+#[inline]
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
+}
+
+/// Compares two strings in constant time.
+/// Pre-hashes both inputs with SHA-256 to a fixed 32-byte digest before comparison,
+/// preventing secret length leakage via side-channel timing analysis.
+pub fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    let hash_a = Sha256::digest(a.as_bytes());
+    let hash_b = Sha256::digest(b.as_bytes());
+    hash_a.ct_eq(&hash_b).into()
+}
+
+/// Signs webhook payload bytes with HMAC-SHA256.
+/// Output format: `sha256=<64_hex_digits>` suitable for header `X-Uwah-Signature`.
+pub fn sign_payload(secret: &str, payload: &[u8]) -> Result<String, AppError> {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to initialize HMAC: {}", e)))?;
+    mac.update(payload);
+    let signature_bytes = mac.finalize().into_bytes();
+    Ok(format!("sha256={}", hex::encode(signature_bytes)))
+}
+
+/// Verifies an incoming `X-Uwah-Signature` header value in constant time.
+pub fn verify_signature(secret: &str, payload: &[u8], signature_header: &str) -> bool {
+    let expected_hex = signature_header
+        .strip_prefix("sha256=")
+        .unwrap_or(signature_header);
+    let Ok(expected_bytes) = hex::decode(expected_hex) else {
+        return false;
+    };
+    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
+        return false;
+    };
+    mac.update(payload);
+    mac.verify_slice(&expected_bytes).is_ok()
+}
+
+/// Hardened token verification preventing timing side-channel attacks.
 pub fn verify_token(token: &str, expected: &str) -> bool {
-    // 1. Direct plaintext match (e.g. auth = "123" in config)
-    if token == expected {
+    // 1. Direct plaintext match using constant-time hash comparison
+    if constant_time_eq_str(token, expected) {
         return true;
     }
 
-    // 2. SHA-256 hash match (e.g. hex digest in config)
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    let hash_bytes = hasher.finalize();
-    let token_hash = hash_bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>();
-
-    token_hash.eq_ignore_ascii_case(expected)
+    // 2. SHA-256 hash match (e.g. if expected is configured as a 64-char hex digest)
+    let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+    constant_time_eq_str(&token_hash.to_lowercase(), &expected.to_lowercase())
 }
 
 fn check_query_auth(query_str: &str, expected: &str) -> bool {

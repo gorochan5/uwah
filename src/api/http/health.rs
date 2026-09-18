@@ -1,10 +1,10 @@
-use axum::{extract::State, Json};
-use std::sync::Arc;
 use crate::api::http::{
     error::{AppResult, ErrorResponse},
     state::AppState,
 };
 use crate::models::health::HealthStatus;
+use axum::{Json, extract::State};
+use std::sync::Arc;
 
 #[utoipa::path(
     get,
@@ -18,9 +18,7 @@ use crate::models::health::HealthStatus;
         (status = 500, description = "Internal or database error", body = ErrorResponse)
     )
 )]
-pub async fn health_check(
-    State(state): State<Arc<AppState>>,
-) -> AppResult<Json<HealthStatus>> {
+pub async fn health_check(State(state): State<Arc<AppState>>) -> AppResult<Json<HealthStatus>> {
     let db_status = match sqlx::query("SELECT 1").execute(&state.pool).await {
         Ok(_) => "connected".to_string(),
         Err(err) => format!("error: {}", err),
@@ -32,4 +30,3 @@ pub async fn health_check(
         database: db_status,
     }))
 }
-

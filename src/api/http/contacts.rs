@@ -1,18 +1,19 @@
-use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use crate::api::http::{
+    chats::ChatActionResponse,
     error::{AppError, AppResult},
     state::AppState,
 };
 use crate::models::contacts::Contact;
 use crate::repository::contacts as repo;
 use crate::repository::sessions as session_repo;
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use utoipa::ToSchema;
 
@@ -41,15 +42,25 @@ pub struct SyncContactsRequest {
 pub struct SyncContactsResponse {
     pub synced_count: usize,
 }
+use utoipa::IntoParams;
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct ListContactsQuery {
+    #[param(example = 50)]
+    pub limit: Option<i64>,
+    #[param(example = 0)]
+    pub offset: Option<i64>,
+}
 
 #[utoipa::path(
     get,
     path = "/sessions/{id}/contacts",
     tag = "Contacts",
     summary = "List contacts",
-    description = "Retrieves all synced contacts for the specified session.",
+    description = "Retrieves contacts for the specified session with limit and offset pagination.",
     params(
-        ("id" = String, Path, description = "Session identifier")
+        ("id" = String, Path, description = "Session identifier"),
+        ListContactsQuery
     ),
     responses(
         (status = 200, description = "List of contacts", body = Vec<Contact>),
@@ -61,12 +72,15 @@ pub struct SyncContactsResponse {
 pub async fn list_contacts(
     State(_state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    Query(query): Query<ListContactsQuery>,
 ) -> AppResult<Json<Vec<Contact>>> {
     let _ = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let contacts = repo::get_by_session(&session_id).await?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let contacts = repo::get_by_session_paginated(&session_id, limit, offset).await?;
     Ok(Json(contacts))
 }
 
@@ -98,7 +112,10 @@ pub async fn get_contact(
     let contact = repo::get_one(&jid, &session_id).await?;
     match contact {
         Some(c) => Ok(Json(c)),
-        None => Err(AppError::NotFound(format!("Contact '{}' not found in session '{}'", jid, session_id))),
+        None => Err(AppError::NotFound(format!(
+            "Contact '{}' not found in session '{}'",
+            jid, session_id
+        ))),
     }
 }
 
@@ -178,9 +195,10 @@ pub async fn sync_contacts(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let count = req.contacts.len();
-    for item in req.contacts {
-        let contact = Contact {
+    let contacts: Vec<Contact> = req
+        .contacts
+        .into_iter()
+        .map(|item| Contact {
             session_id: session_id.clone(),
             jid: item.jid,
             lid_jid: item.lid_jid,
@@ -193,11 +211,17 @@ pub async fn sync_contacts(
             devices: item.devices,
             verified_name: item.verified_name,
             updated_at: chrono::Utc::now(),
-        };
-        repo::upsert(&contact).await?;
-    }
+        })
+        .collect();
 
-    Ok((StatusCode::OK, Json(SyncContactsResponse { synced_count: count })))
+    let count = repo::upsert_batch(&session_id, &contacts).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(SyncContactsResponse {
+            synced_count: count,
+        }),
+    ))
 }
 
 #[utoipa::path(
@@ -229,3 +253,297 @@ pub async fn delete_contact(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct CheckContactsRequest {
+    /// Array of phone numbers (e.g. "5511999999999") or JIDs ("123456789@s.whatsapp.net")
+    #[schema(example = json!(["5511999999999", "1234567890@s.whatsapp.net"]))]
+    pub contacts: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ContactStatusItem {
+    pub input: String,
+    pub jid: String,
+    pub is_registered: bool,
+    pub is_business: bool,
+    pub lid: Option<String>,
+    pub pn_jid: Option<String>,
+    pub verified_name: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct CheckContactsResponse {
+    pub results: Vec<ContactStatusItem>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/contacts/check",
+    tag = "Contacts",
+    summary = "Check WhatsApp registration",
+    description = "Checks whether one or more phone numbers or JIDs are registered on WhatsApp.",
+    params(
+        ("id" = String, Path, description = "Session identifier")
+    ),
+    request_body = CheckContactsRequest,
+    responses(
+        (status = 200, description = "Registration check results", body = CheckContactsResponse),
+        (status = 400, description = "Empty contacts list or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn check_contacts(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(req): Json<CheckContactsRequest>,
+) -> AppResult<Json<CheckContactsResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    if req.contacts.is_empty() {
+        return Err(AppError::BadRequest(
+            "Contacts array cannot be empty".to_string(),
+        ));
+    }
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let mut jids = Vec::with_capacity(req.contacts.len());
+    let mut input_map = std::collections::HashMap::new();
+
+    for raw in &req.contacts {
+        let parsed = crate::api::http::chats::parse_target_jid(raw)?;
+        if !parsed.is_pn() && !parsed.is_lid() {
+            return Err(AppError::BadRequest(format!(
+                "Contact '{}' resolved to unsupported JID type. Only PN and LID contacts are supported.",
+                raw
+            )));
+        }
+        input_map.insert(parsed.to_non_ad().to_string(), raw.clone());
+        jids.push(parsed);
+    }
+
+    let results = client
+        .contacts()
+        .is_on_whatsapp(&jids)
+        .await
+        .map_err(crate::api::http::chats::map_wa_error)?;
+
+    let status_items: Vec<ContactStatusItem> = results
+        .into_iter()
+        .map(|r| {
+            let jid_str = r.jid.to_string();
+            let input = input_map
+                .get(&r.jid.to_non_ad().to_string())
+                .cloned()
+                .unwrap_or_else(|| jid_str.clone());
+
+            let error = r.contact_error.map(|e| format!("{:?}", e));
+            let verified_name = r.verified_name.and_then(|v| v.name);
+
+            ContactStatusItem {
+                input,
+                jid: jid_str,
+                is_registered: r.is_registered,
+                is_business: r.is_business,
+                lid: r.lid.map(|j| j.to_string()),
+                pn_jid: r.pn_jid.map(|j| j.to_string()),
+                verified_name,
+                error,
+            }
+        })
+        .collect();
+
+    Ok(Json(CheckContactsResponse {
+        results: status_items,
+    }))
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct ProfilePictureQuery {
+    /// If true, requests preview thumbnail; otherwise full-resolution picture. Default: false.
+    pub preview: Option<bool>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProfilePictureResponse {
+    pub id: String,
+    pub url: String,
+    pub direct_path: Option<String>,
+    pub hash: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/sessions/{id}/contacts/{jid}/profile-picture",
+    tag = "Contacts",
+    summary = "Get contact profile picture",
+    description = "Fetches the public profile picture URL and metadata for a WhatsApp contact or group.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "WhatsApp JID"),
+        ProfilePictureQuery
+    ),
+    responses(
+        (status = 200, description = "Profile picture details", body = ProfilePictureResponse),
+        (status = 400, description = "Invalid JID or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Profile picture or session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn get_profile_picture(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Query(query): Query<ProfilePictureQuery>,
+) -> AppResult<Json<ProfilePictureResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let target_jid = crate::api::http::chats::parse_target_jid(&jid)?;
+    let preview = query.preview.unwrap_or(false);
+
+    let pic_opt = client
+        .contacts()
+        .get_profile_picture(&target_jid, preview)
+        .await
+        .map_err(crate::api::http::chats::map_wa_error)?;
+
+    match pic_opt {
+        Some(pic) => Ok(Json(ProfilePictureResponse {
+            id: pic.id,
+            url: pic.url,
+            direct_path: pic.direct_path,
+            hash: pic.hash,
+        })),
+        None => Err(AppError::NotFound(format!(
+            "Profile picture not available for '{}'",
+            jid
+        ))),
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/contacts/{jid}/block",
+    tag = "Contacts",
+    summary = "Block contact",
+    description = "Blocks a contact on WhatsApp network.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "WhatsApp contact JID")
+    ),
+    responses(
+        (status = 200, description = "Contact blocked successfully", body = ChatActionResponse),
+        (status = 400, description = "Invalid JID or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn block_contact(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+) -> AppResult<Json<crate::api::http::chats::ChatActionResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let target_jid = crate::api::http::chats::parse_target_jid(&jid)?;
+    client
+        .blocking()
+        .block(&target_jid)
+        .await
+        .map_err(crate::api::http::chats::map_wa_error)?;
+
+    Ok(Json(crate::api::http::chats::ChatActionResponse {
+        jid,
+        status: "blocked".to_string(),
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/contacts/{jid}/unblock",
+    tag = "Contacts",
+    summary = "Unblock contact",
+    description = "Unblocks a previously blocked contact on WhatsApp network.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "WhatsApp contact JID")
+    ),
+    responses(
+        (status = 200, description = "Contact unblocked successfully", body = ChatActionResponse),
+        (status = 400, description = "Invalid JID or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn unblock_contact(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+) -> AppResult<Json<crate::api::http::chats::ChatActionResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let target_jid = crate::api::http::chats::parse_target_jid(&jid)?;
+    client
+        .blocking()
+        .unblock(&target_jid)
+        .await
+        .map_err(crate::api::http::chats::map_wa_error)?;
+
+    Ok(Json(crate::api::http::chats::ChatActionResponse {
+        jid,
+        status: "unblocked".to_string(),
+    }))
+}

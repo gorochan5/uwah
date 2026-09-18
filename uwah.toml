@@ -11,3 +11,9 @@ dir = "d:/projects/rust/uwah/media"
 
 [sessions]
 dir = "d:/projects/rust/uwah/sessions"
+
+# [webhook]
+# enabled = false
+# url = "http://localhost:8080/webhook"
+# secret = "my_secure_webhook_secret"
+

@@ -1,10 +1,10 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use maud::{html, Markup, PreEscaped, DOCTYPE};
-use qrcode::{render::svg, QrCode};
+use maud::{DOCTYPE, Markup, PreEscaped, html};
+use qrcode::{QrCode, render::svg};
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -23,8 +23,8 @@ pub struct ScanQuery {
 
 /// Generates a clean, standalone vector SVG string for the QR payload.
 pub fn render_qr_svg(payload: &str) -> Result<String, String> {
-    let code = QrCode::new(payload.as_bytes())
-        .map_err(|e| format!("Failed to encode QR payload: {e}"))?;
+    let code =
+        QrCode::new(payload.as_bytes()).map_err(|e| format!("Failed to encode QR payload: {e}"))?;
 
     let svg_str = code
         .render::<svg::Color>()
@@ -67,6 +67,7 @@ fn check_auth(state: &AppState, query_token: Option<&str>, headers: &HeaderMap) 
     ),
     responses(
         (status = 200, description = "Standalone HTML pairing page with HTMX live QR updates", content_type = "text/html"),
+        (status = 401, description = "Unauthorized - invalid or missing credentials", content_type = "text/html"),
         (status = 404, description = "Session not found", body = ErrorResponse)
     )
 )]
@@ -75,9 +76,14 @@ pub async fn scan_page(
     Path(id): Path<String>,
     Query(query): Query<ScanQuery>,
     headers: HeaderMap,
-) -> AppResult<Markup> {
+) -> AppResult<Response> {
     if !check_auth(&state, query.token.as_deref(), &headers) {
-        return Ok(render_unauthorized_page(&id));
+        return Ok((
+            StatusCode::UNAUTHORIZED,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            render_unauthorized_page(&id).into_string(),
+        )
+            .into_response());
     }
 
     let session = repo::get_one(&id)
@@ -93,12 +99,31 @@ pub async fn scan_page(
         });
     }
 
-    Ok(scan_page_template(&session, query.token.as_deref()))
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        scan_page_template(&session, query.token.as_deref()).into_string(),
+    )
+        .into_response())
 }
 
-/// GET /sessions/{id}/qr-frame
-/// Dynamic HTMX fragment polled every 2 seconds.
-/// Automatically terminates polling upon CONNECTED via HTTP Status 286.
+#[utoipa::path(
+    get,
+    path = "/sessions/{id}/qr-frame",
+    tag = "Sessions",
+    summary = "HTMX QR frame fragment",
+    description = "Polled dynamic HTMX HTML fragment displaying the real-time QR code or connected status. Returns HTTP 286 to stop polling once connected.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("token" = Option<String>, Query, description = "Authentication token when opening directly in a browser")
+    ),
+    responses(
+        (status = 200, description = "HTML fragment with current QR code", content_type = "text/html"),
+        (status = 286, description = "HTMX stop polling: session is connected", content_type = "text/html"),
+        (status = 401, description = "Unauthorized", content_type = "text/html"),
+        (status = 404, description = "Session not found", body = ErrorResponse)
+    )
+)]
 pub async fn qr_frame(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -195,7 +220,7 @@ pub fn scan_page_template(session: &Session, auth_token: Option<&str>) -> Markup
 
             body class="min-h-full flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8" {
                 main class="w-full max-w-md bg-slate-800/95 backdrop-blur border border-slate-700/60 rounded-2xl shadow-2xl p-6 sm:p-8 space-y-6" {
-                    
+
                     // Header
                     header class="text-center space-y-2" {
                         div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-slate-700/50 border border-slate-600/50 text-xs font-mono text-emerald-400" {

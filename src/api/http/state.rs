@@ -1,7 +1,7 @@
+use crate::api::session_manager::SessionManager;
+use crate::config::Config;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use crate::config::Config;
-use crate::api::session_manager::SessionManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -12,6 +12,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(pool: SqlitePool, config: &'static Config, sessions: Arc<SessionManager>) -> Self {
-        Self { pool, config, sessions }
+        Self {
+            pool,
+            config,
+            sessions,
+        }
     }
 }

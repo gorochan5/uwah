@@ -6,7 +6,7 @@ type Session = crate::models::sessions::Session;
 
 pub async fn get_all() -> Result<Vec<Session>> {
     info!("Fetching all sessions from DB");
-    
+
     let pool = crate::database::get();
     sqlx::query_as!(
         Session,
@@ -29,11 +29,8 @@ pub async fn get_all() -> Result<Vec<Session>> {
 }
 
 pub async fn get_one(id: &str) -> Result<Option<Session>> {
-    info!(
-        session_id = id,
-        "Fetching session from DB"
-    );
-    
+    info!(session_id = id, "Fetching session from DB");
+
     let pool = crate::database::get();
     sqlx::query_as!(
         Session,
@@ -57,10 +54,7 @@ pub async fn get_one(id: &str) -> Result<Option<Session>> {
 }
 
 pub async fn create(id: &str) -> Result<SqliteQueryResult> {
-    info!(
-        session_id = id,
-        "Creating session in DB"
-    );
+    info!(session_id = id, "Creating session in DB");
 
     let pool = crate::database::get();
     sqlx::query!(
@@ -80,10 +74,7 @@ pub async fn create(id: &str) -> Result<SqliteQueryResult> {
 }
 
 pub async fn delete(id: &str) -> Result<SqliteQueryResult> {
-    info!(
-        session_id = id,
-        "Deleting session in DB"
-    );
+    info!(session_id = id, "Deleting session in DB");
 
     let pool = crate::database::get();
     sqlx::query!(
@@ -121,8 +112,8 @@ pub async fn auth(session: Session) -> Result<SqliteQueryResult> {
         "#,
         session.phone_number,
         session.push_name,
-        "CONNECTED",
-        None::<String>,
+        session.status,
+        session.qr_payload,
         session.id
     )
     .execute(pool)
@@ -155,11 +146,7 @@ pub async fn refresh_qr(id: &str, qr_payload: &str) -> Result<SqliteQueryResult>
 }
 
 pub async fn rename(id_old: &str, id_new: &str) -> Result<SqliteQueryResult> {
-    info!(
-        id_old = id_old,
-        id_new = id_new,
-        "Renaming session in DB"
-    );
+    info!(id_old = id_old, id_new = id_new, "Renaming session in DB");
 
     let pool = crate::database::get();
     sqlx::query!(

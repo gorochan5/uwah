@@ -7,4 +7,3 @@ pub struct HealthStatus {
     pub version: String,
     pub database: String,
 }
-

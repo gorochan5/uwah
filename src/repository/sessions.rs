@@ -12,8 +12,8 @@ pub async fn get_all() -> Result<Vec<Session>> {
         Session,
         r#"
         SELECT
-            id, 
-            phone_number, 
+            id,
+            phone_number,
             push_name,
             status,
             qr_payload,
@@ -36,8 +36,8 @@ pub async fn get_one(id: &str) -> Result<Option<Session>> {
         Session,
         r#"
         SELECT
-            id, 
-            phone_number, 
+            id,
+            phone_number,
             push_name,
             status,
             qr_payload,
@@ -59,7 +59,7 @@ pub async fn create(id: &str) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO sessions ( 
+        INSERT INTO sessions (
                 id
             )
         VALUES (

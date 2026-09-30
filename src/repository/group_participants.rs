@@ -8,15 +8,14 @@ pub async fn get_all() -> Result<Vec<GroupParticipant>> {
     info!("Fetching all group participants from DB");
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        GroupParticipant,
+    sqlx::query_as::<_, GroupParticipant>(
         r#"
         SELECT
             session_id,
             group_jid,
             user_jid,
             role,
-            joined_at AS "joined_at: chrono::DateTime<chrono::Utc>"
+            joined_at
         FROM group_participants
         "#
     )
@@ -33,22 +32,21 @@ pub async fn get_by_group(session_id: &str, group_jid: &str) -> Result<Vec<Group
     );
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        GroupParticipant,
+    sqlx::query_as::<_, GroupParticipant>(
         r#"
         SELECT
             session_id,
             group_jid,
             user_jid,
             role,
-            joined_at AS "joined_at: chrono::DateTime<chrono::Utc>"
+            joined_at
         FROM group_participants
         WHERE session_id = $1
         AND group_jid = $2
         "#,
-        session_id,
-        group_jid
     )
+    .bind(session_id)
+    .bind(group_jid)
     .fetch_all(pool)
     .await
     .context("Failed to fetch group participants from DB")
@@ -67,24 +65,23 @@ pub async fn get_one(
     );
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        GroupParticipant,
+    sqlx::query_as::<_, GroupParticipant>(
         r#"
         SELECT
             session_id,
             group_jid,
             user_jid,
             role,
-            joined_at AS "joined_at: chrono::DateTime<chrono::Utc>"
+            joined_at
         FROM group_participants
         WHERE session_id = $1
         AND group_jid = $2
         AND user_jid = $3
         "#,
-        session_id,
-        group_jid,
-        user_jid
     )
+    .bind(session_id)
+    .bind(group_jid)
+    .bind(user_jid)
     .fetch_optional(pool)
     .await
     .context("Failed to fetch group participant from DB")
@@ -101,7 +98,7 @@ pub async fn create(participant: &GroupParticipant) -> Result<SqliteQueryResult>
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO group_participants ( 
+        INSERT INTO group_participants (
             session_id,
             group_jid,
             user_jid,

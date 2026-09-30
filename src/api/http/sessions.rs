@@ -8,7 +8,6 @@ use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -89,7 +88,7 @@ pub async fn get_session(
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateSessionRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<(StatusCode, Json<Session>)> {
     let id = req.id.trim();
     if id.is_empty() {
         return Err(AppError::BadRequest(

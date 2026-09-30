@@ -8,8 +8,7 @@ pub async fn get_all() -> Result<Vec<Chat>> {
     info!("Fetching all chats from DB");
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        Chat,
+    sqlx::query_as::<_, Chat>(
         r#"
         SELECT
             session_id,
@@ -26,7 +25,7 @@ pub async fn get_all() -> Result<Vec<Chat>> {
             created_at AS "created_at!: chrono::DateTime<chrono::Utc>",
             updated_at AS "updated_at!: chrono::DateTime<chrono::Utc>"
         FROM chats
-        "#
+        "#,
     )
     .fetch_all(pool)
     .await
@@ -162,7 +161,7 @@ pub async fn create(jid: &str, session_id: &str) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO chats ( 
+        INSERT INTO chats (
                 jid,
                 session_id
             )
@@ -293,7 +292,7 @@ pub async fn delete(jid: &str, session_id: &str) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        DELETE FROM chats   
+        DELETE FROM chats
         WHERE jid = $1
         AND session_id = $2
         "#,

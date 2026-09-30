@@ -67,7 +67,7 @@ pub async fn create(
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO media_cache ( 
+        INSERT INTO media_cache (
             sha256,
             disk_path,
             mime_type,
@@ -102,7 +102,7 @@ pub async fn upsert(
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO media_cache ( 
+        INSERT INTO media_cache (
             sha256,
             disk_path,
             mime_type,

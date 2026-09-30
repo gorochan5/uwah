@@ -255,7 +255,7 @@ pub async fn upload_media(
     Path(session_id): Path<String>,
     headers: HeaderMap,
     request: Request,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<(StatusCode, Json<UploadMediaResponse>)> {
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|h| h.to_str().ok())

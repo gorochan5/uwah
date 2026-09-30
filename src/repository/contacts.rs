@@ -158,7 +158,7 @@ pub async fn create(jid: &str, session_id: &str) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO contacts ( 
+        INSERT INTO contacts (
                 jid,
                 session_id
             )

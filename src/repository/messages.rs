@@ -209,7 +209,7 @@ pub async fn create(message: &Message) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO messages ( 
+        INSERT INTO messages (
             id,
             session_id,
             chat_jid,

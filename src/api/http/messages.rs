@@ -2,7 +2,6 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -222,7 +221,7 @@ pub async fn send_message(
     State(state): State<Arc<AppState>>,
     Path((session_id, jid)): Path<(String, String)>,
     Json(req): Json<SendMessageRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<(StatusCode, Json<Message>)> {
     let session = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
@@ -329,7 +328,7 @@ pub async fn send_media(
     State(state): State<Arc<AppState>>,
     Path((session_id, jid)): Path<(String, String)>,
     Json(req): Json<SendMediaRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<(StatusCode, Json<Message>)> {
     let session = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;

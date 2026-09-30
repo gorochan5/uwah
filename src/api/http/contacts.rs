@@ -10,7 +10,6 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -140,7 +139,7 @@ pub async fn upsert_contact(
     State(_state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     Json(req): Json<UpsertContactRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<(StatusCode, Json<Contact>)> {
     let _ = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
@@ -190,7 +189,7 @@ pub async fn sync_contacts(
     State(_state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
     Json(req): Json<SyncContactsRequest>,
-) -> AppResult<impl IntoResponse> {
+) -> AppResult<(StatusCode, Json<SyncContactsResponse>)> {
     let _ = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;

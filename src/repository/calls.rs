@@ -8,8 +8,7 @@ pub async fn get_all() -> Result<Vec<Call>> {
     info!("Fetching all calls from DB");
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        Call,
+    sqlx::query_as::<_, Call>(
         r#"
         SELECT
             session_id,
@@ -20,8 +19,8 @@ pub async fn get_all() -> Result<Vec<Call>> {
             is_group_call,
             status,
             duration_seconds,
-            created_at AS "created_at: chrono::DateTime<chrono::Utc>",
-            ended_at AS "ended_at?: chrono::DateTime<chrono::Utc>"
+            created_at,
+            ended_at
         FROM calls
         "#
     )
@@ -37,8 +36,7 @@ pub async fn get_by_session(session_id: &str) -> Result<Vec<Call>> {
     );
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        Call,
+    sqlx::query_as::<_, Call>(
         r#"
         SELECT
             session_id,
@@ -49,14 +47,14 @@ pub async fn get_by_session(session_id: &str) -> Result<Vec<Call>> {
             is_group_call,
             status,
             duration_seconds,
-            created_at AS "created_at: chrono::DateTime<chrono::Utc>",
-            ended_at AS "ended_at?: chrono::DateTime<chrono::Utc>"
+            created_at,
+            ended_at
         FROM calls
         WHERE session_id = $1
         ORDER BY created_at DESC
         "#,
-        session_id
     )
+    .bind(session_id)
     .fetch_all(pool)
     .await
     .context("Failed to fetch calls for session from DB")
@@ -70,8 +68,7 @@ pub async fn get_one(id: &str, session_id: &str) -> Result<Option<Call>> {
     );
 
     let pool = crate::database::get();
-    sqlx::query_as!(
-        Call,
+    sqlx::query_as::<_, Call>(
         r#"
         SELECT
             session_id,
@@ -82,15 +79,15 @@ pub async fn get_one(id: &str, session_id: &str) -> Result<Option<Call>> {
             is_group_call,
             status,
             duration_seconds,
-            created_at AS "created_at: chrono::DateTime<chrono::Utc>",
-            ended_at AS "ended_at?: chrono::DateTime<chrono::Utc>"
+            created_at,
+            ended_at
         FROM calls
         WHERE id = $1
         AND session_id = $2
         "#,
-        id,
-        session_id
     )
+    .bind(id)
+    .bind(session_id)
     .fetch_optional(pool)
     .await
     .context("Failed to fetch call from DB")
@@ -106,7 +103,7 @@ pub async fn create(call: &Call) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        INSERT INTO calls ( 
+        INSERT INTO calls (
             session_id,
             id,
             chat_jid,
@@ -144,7 +141,7 @@ pub async fn delete(id: &str, session_id: &str) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
-        DELETE FROM calls   
+        DELETE FROM calls
         WHERE id = $1
         AND session_id = $2
         "#,

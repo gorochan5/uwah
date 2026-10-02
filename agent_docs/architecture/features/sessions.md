@@ -1,4 +1,6 @@
-# Sessões WhatsApp
+# Sessões WhatsApp — estado atual
+
+> A API atual está em `docs/API.md`; o ciclo de vida é implementado por `src/api/http/sessions.rs` e `src/api/session_manager.rs`. Notas históricas abaixo devem ser lidas nesse contexto.
 
 ## Objetivo
 

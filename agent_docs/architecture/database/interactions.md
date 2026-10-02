@@ -6,7 +6,7 @@ Descrever o acesso SQL efetivamente presente.
 
 ## Conexões e inicialização
 
-`src/database/mod.rs::init` cria `SqliteConnectOptions`, habilita foreign keys, WAL, sincronização `NORMAL`, criação do arquivo e um `SqlitePool` com `max_connections(5)`. O pool é guardado em `OnceLock`; `get()` falha com panic se `init()` não tiver sido chamado. Não há transações nem execução de migrations.
+`src/database/mod.rs::init` cria `SqliteConnectOptions`, habilita foreign keys, WAL, sincronização `NORMAL`, criação do arquivo e um `SqlitePool` com `max_connections(5)`. O pool é guardado em `OnceLock`; `get()` falha com panic se `init()` não tiver sido chamado. As migrations são executadas com `sqlx::migrate!("./migrations")`.
 
 ## Repositórios
 

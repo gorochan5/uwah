@@ -1,110 +1,115 @@
-# Uwah Database Schema & Concurrency Guide
+# Uwah Database Schema, Relational Integrity & Concurrency Architecture
 
-## 1. Overview
+## 1. Dual-Tier Storage Isolation
 
-Uwah maintains two strictly isolated database tiers:
-1. **`uwah.db`**: Gateway business state and relational data model (SQLx + SQLite).
-2. **`sessions/{id}.db`**: Cryptographic Signal protocol store (whatsapp-rust internal engine).
+Uwah strictly separates business state from cryptographic stores:
+1. **`uwah.db` (Relational Gateway Database)**: Central application data, contacts, chat histories, messages, outbox events, and group metadata (SQLx + SQLite WAL mode).
+2. **`sessions/{id}.db` (Signal Cryptographic Stores)**: Per-session Noise keys, prekeys, and Double Ratchet state managed by `whatsapp-rust`.
 
 ---
 
 ## 2. Gateway Database Schema (`uwah.db`)
 
-### `sessions`
-Tracks active and historical WhatsApp sessions.
+### 2.1 `sessions`
+Tracks WhatsApp multi-session states and lifecycles.
 | Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | TEXT | PRIMARY KEY | Unique identifier for the session |
-| `phone_number` | TEXT | NULLABLE | Authenticated phone number (e.g. `5519998005388`) |
-| `push_name` | TEXT | NULLABLE | WhatsApp profile display name |
-| `status` | TEXT | NOT NULL DEFAULT `'QRCODE'` | `QRCODE`, `CONNECTED`, `LOGGED_OUT` |
-| `qr_payload` | TEXT | NULLABLE | Raw WhatsApp pairing string |
-| `created_at` | TIMESTAMP | NOT NULL | Record creation time |
-| `updated_at` | TIMESTAMP | NOT NULL | Last status/qr update |
+| :--- | :--- | :--- | :--- |
+| `id` | TEXT | PRIMARY KEY | Unique sanitized session ID (e.g. `primary_bot`) |
+| `phone_number` | TEXT | NULLABLE | Authenticated user phone number |
+| `push_name` | TEXT | NULLABLE | Profile display push name |
+| `status` | TEXT | NOT NULL DEFAULT `'QRCODE'` | `QRCODE`, `PAIRING_CODE`, `CONNECTED`, `LOGGED_OUT`, `CONFLICT` |
+| `qr_payload` | TEXT | NULLABLE | Vector QR pairing payload |
+| `created_at` | TIMESTAMP | NOT NULL | Record creation timestamp |
+| `updated_at` | TIMESTAMP | NOT NULL | Last update timestamp |
 
 ---
 
-### `chats`
-Conversation threads (1:1 direct chats, group chats, newsletters).
+### 2.2 `outbox_events` (Transactional Outbox)
+Enables reliable at-least-once webhook event delivery.
 | Column | Type | Constraints | Description |
-|---|---|---|---|
-| `session_id` | TEXT | PK, FK -> `sessions(id)` | Owning session |
-| `jid` | TEXT | PK | WhatsApp Chat JID (`...s.whatsapp.net` or `...@g.us`) |
-| `name` | TEXT | NULLABLE | Contact display name or group title |
-| `kind` | TEXT | NOT NULL DEFAULT `'direct'` | `'direct'`, `'group'`, `'newsletter'`, `'broadcast'` |
-| `unread_count` | INTEGER | NOT NULL DEFAULT 0 | Unread message counter |
-| `is_archived` | BOOLEAN | NOT NULL DEFAULT 0 | Archived state |
-| `is_pinned` | BOOLEAN | NOT NULL DEFAULT 0 | Pinned state |
-| `last_message_at` | INTEGER | NULLABLE | Epoch timestamp of latest message |
-| `created_at` | TIMESTAMP | NOT NULL | Creation timestamp |
-| `updated_at` | TIMESTAMP | NOT NULL | Update timestamp |
+| :--- | :--- | :--- | :--- |
+| `id` | TEXT | PRIMARY KEY | UUIDv7 monotonic event identifier |
+| `session_id` | TEXT | NOT NULL, FK -> `sessions(id)` ON DELETE CASCADE | Owning session ID |
+| `event_type` | TEXT | NOT NULL | Topic name (e.g. `message.received`, `session.connected`) |
+| `aggregate_id` | TEXT | NOT NULL | Aggregate partition key (e.g. `chat_jid`) for FIFO ordering |
+| `payload` | TEXT | NOT NULL | Serialized JSON event envelope |
+| `status` | TEXT | NOT NULL DEFAULT `'pending'` | `'pending'`, `'dispatched'`, `'failed'` |
+| `retry_count` | INTEGER | NOT NULL DEFAULT 0 | Retries consumed (max 10 before DLQ) |
+| `next_retry_at` | INTEGER | NOT NULL DEFAULT 0 | Epoch millisecond schedule timestamp |
+| `lease_until` | INTEGER | NOT NULL DEFAULT 0 | Lock lease expiry timestamp |
+| `last_error` | TEXT | NULLABLE | Last HTTP/transport error message |
+| `created_at` | INTEGER | NOT NULL | Epoch millisecond creation timestamp |
+
+Indexes:
+- `idx_outbox_poll` on `(status, next_retry_at)`
+- `idx_outbox_aggregate_seq` on `(session_id, aggregate_id, created_at)`
 
 ---
 
-### `messages`
-Inbound and outbound message records.
+### 2.3 `webhook_dlq` (Dead-Letter Queue)
+Quarantine table for exhausted or permanently rejected webhook events.
 | Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | TEXT | PK | WhatsApp message/stanza ID |
-| `session_id` | TEXT | PK, FK -> `sessions(id)` | Owning session |
-| `chat_jid` | TEXT | NOT NULL, FK -> `chats(session_id, jid)` | Target chat |
-| `sender_jid` | TEXT | NOT NULL | Sender JID |
-| `quoted_message_id`| TEXT | NULLABLE | Stanza ID of quoted message if reply |
-| `is_from_me` | BOOLEAN | NOT NULL | True if sent by gateway |
-| `message_type` | TEXT | NOT NULL | `'text'`, `'image'`, `'audio'`, etc. |
-| `body` | TEXT | NULLABLE | Text content or media caption |
-| `delivery_status` | TEXT | NOT NULL | `'pending'`, `'sent'`, `'delivered'`, `'read'`, `'received'` |
-| `is_edited` | BOOLEAN | NOT NULL DEFAULT 0 | True if message edit was applied |
-| `is_deleted` | BOOLEAN | NOT NULL DEFAULT 0 | True if revoked |
-| `timestamp` | TIMESTAMP | NOT NULL | Message creation timestamp |
+| :--- | :--- | :--- | :--- |
+| `id` | TEXT | PRIMARY KEY | UUIDv7 event identifier |
+| `session_id` | TEXT | NOT NULL | Originating session ID |
+| `event_type` | TEXT | NOT NULL | Event topic name |
+| `payload` | TEXT | NOT NULL | Original JSON event body |
+| `error_message` | TEXT | NOT NULL | Reason for DLQ quarantine |
+| `retry_count` | INTEGER | NOT NULL | Number of retries attempted before DLQ |
+| `failed_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Timestamp when moved to DLQ |
 
 ---
 
-### `contacts`
-Contact book synchronized from WhatsApp servers.
+### 2.4 `group_metadata`
+Stores WhatsApp group settings and permissions.
 | Column | Type | Constraints | Description |
-|---|---|---|---|
-| `session_id` | TEXT | PK, FK -> `sessions(id)` | Owning session |
-| `jid` | TEXT | PK | Contact Phone Number JID |
-| `lid_jid` | TEXT | NULLABLE | Linked Identity JID |
-| `phone_number` | TEXT | NULLABLE | Clean digits format |
-| `push_name` | TEXT | NULLABLE | Name chosen by user |
-| `is_business` | BOOLEAN | NOT NULL DEFAULT 0 | True if WhatsApp Business account |
+| :--- | :--- | :--- | :--- |
+| `session_id` | TEXT | PK, FK -> `sessions(id)` ON DELETE CASCADE | Owning session |
+| `group_jid` | TEXT | PK | WhatsApp Group JID (`...@g.us`) |
+| `description` | TEXT | NULLABLE | Group description body |
+| `description_id` | TEXT | NULLABLE | Optimistic concurrency token for descriptions |
+| `is_locked` | BOOLEAN | NOT NULL DEFAULT 0 | True if only admins can edit group metadata |
+| `is_announcement`| BOOLEAN | NOT NULL DEFAULT 0 | True if only admins can send messages |
+| `ephemeral_expiration`| INTEGER | NULLABLE | Disappearing message expiration timer (seconds) |
+| `membership_approval` | BOOLEAN | NOT NULL DEFAULT 0 | True if admin approval is required to join |
+| `member_add_mode` | TEXT | NULLABLE | Who can add members |
+| `member_link_mode`| TEXT | NULLABLE | Who can share invite links |
+| `creator_jid` | TEXT | NULLABLE | Group creator JID |
+| `parent_group_jid` | TEXT | NULLABLE | Parent community group JID if subgroup |
+| `size` | INTEGER | NULLABLE | Total group participant count |
+| `updated_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Last synchronized timestamp |
 
 ---
 
-### `group_participants`
-Group membership records.
+### 2.5 `media_cache`
+Stores metadata and deduplicated SHA-256 binary references.
 | Column | Type | Constraints | Description |
-|---|---|---|---|
-| `session_id` | TEXT | PK | Owning session |
-| `group_jid` | TEXT | PK, FK -> `chats(session_id, jid)` | Target group chat |
-| `user_jid` | TEXT | PK | Member user JID |
-| `role` | TEXT | NOT NULL DEFAULT `'member'` | `'member'`, `'admin'`, `'superadmin'` |
-| `joined_at` | TIMESTAMP | NOT NULL | Join timestamp |
+| :--- | :--- | :--- | :--- |
+| `sha256` | TEXT | PRIMARY KEY | Plaintext binary file SHA-256 hex digest |
+| `disk_path` | TEXT | NOT NULL | Path of the cached file |
+| `mime_type` | TEXT | NOT NULL | MIME type (e.g. `image/jpeg`, `audio/ogg`) |
+| `file_size`| INTEGER | NOT NULL | Binary file size on disk |
+| `ref_count` | INTEGER | NOT NULL DEFAULT 1 | Number of logical references |
+| `last_accessed_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Last cache access used by pruning |
+| `created_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Ingestion timestamp |
+
+### 2.6 Other gateway tables
+
+The initial migration also creates `chats`, `messages`, `contacts`, `group_participants` and `calls`. Their composite keys are session-scoped: for example, chats use `(session_id, jid)` and messages/calls use `(id, session_id)`. Foreign keys cascade session deletion; message media references use `ON DELETE SET NULL`.
+
+Later migrations add performance indexes, session-key cascade behavior, `outbox_events`, `webhook_dlq` and `group_metadata`. The authoritative schema is the SQL under `migrations/`; this document summarizes the current contract and should be updated whenever a migration changes it.
 
 ---
 
-### `calls`
-Voice and video call history.
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `session_id` | TEXT | PK, FK -> `sessions(id)` | Owning session |
-| `id` | TEXT | PK | Call identifier |
-| `chat_jid` | TEXT | NOT NULL | Peer or group JID |
-| `caller_jid` | TEXT | NOT NULL | Caller user JID |
-| `is_video` | BOOLEAN | NOT NULL | Call format |
-| `status` | TEXT | NOT NULL | `'ringing'`, `'accepted'`, `'missed'`, `'rejected'` |
+## 3. SQLite Engine Pragma Tuning
 
----
+Configured during pool initialization in [`src/database/mod.rs`](file:///r:/projects/rust/uwah/src/database/mod.rs):
+- `PRAGMA journal_mode = WAL;` (Concurrent readers and single writer without read locks)
+- `PRAGMA synchronous = NORMAL;` (High throughput durability balance)
+- `PRAGMA cache_size = -64000;` (64MB RAM page cache)
+- `PRAGMA mmap_size = 268435456;` (256MB memory-mapped I/O)
+- `PRAGMA temp_store = MEMORY;`
+- `PRAGMA auto_vacuum = INCREMENTAL;`
+- `PRAGMA busy_timeout = 30000;` (30-second contention backoff window)
 
-## 3. Concurrency & Reliability Tuning
-
-SQLite allows multiple concurrent readers in WAL mode, but only **one single writer at any instant**.
-
-To prevent `SQLITE_BUSY` crashes:
-1. **`busy_timeout(30s)`**: Configured on `SqliteConnectOptions`. Any transaction waiting for the write lock will sleep and retry for up to 30 seconds rather than aborting.
-2. **`journal_mode = WAL`**: Enables concurrent readers during active background writes.
-3. **`synchronous = Normal`**: Maximizes write throughput while preserving ACID crash resilience.
-4. **Idempotency**: All mutations use `ON CONFLICT (...) DO UPDATE` or `ON CONFLICT (...) DO NOTHING` to guarantee that replays or network retries never panic.
-
+Migrations are applied automatically during startup with `sqlx::migrate!("./migrations")`. A background maintenance task runs a passive WAL checkpoint and incremental vacuum every 30 minutes.

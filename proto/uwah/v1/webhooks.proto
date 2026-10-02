@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service WebhookDlqService {
+  rpc ListDlq (ListDlqRequest) returns (ListDlqResponse);
+  rpc GetDlq (GetDlqRequest) returns (WebhookDlqEntryItem);
+  rpc ReplayDlq (ReplayDlqRequest) returns (DlqReplayResponse);
+  rpc ReplayAllDlq (ReplayAllDlqRequest) returns (DlqReplayResponse);
+  rpc DeleteDlq (DeleteDlqRequest) returns (DeleteDlqResponse);
+}
+
+message WebhookDlqEntryItem {
+  string id = 1;
+  string session_id = 2;
+  string event_type = 3;
+  optional string aggregate_id = 4;
+  string payload = 5;
+  int64 retry_count = 6;
+  string error_reason = 7;
+  int64 failed_at = 8;
+}
+
+message ListDlqRequest {
+  optional string session_id = 1;
+}
+
+message ListDlqResponse {
+  repeated WebhookDlqEntryItem entries = 1;
+}
+
+message GetDlqRequest {
+  string id = 1;
+}
+
+message ReplayDlqRequest {
+  string id = 1;
+}
+
+message ReplayAllDlqRequest {}
+
+message DlqReplayResponse {
+  string message = 1;
+  int64 count = 2;
+}
+
+message DeleteDlqRequest {
+  string id = 1;
+}
+
+message DeleteDlqResponse {
+  bool success = 1;
+}

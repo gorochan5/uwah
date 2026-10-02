@@ -1,4 +1,6 @@
-# Contatos
+# Contatos — estado atual
+
+> Sincronização, consulta e ações possuem handlers em `src/api/http/contacts.rs`. Consulte `docs/API.md`; este arquivo contém notas históricas de modelagem.
 
 ## Objetivo
 

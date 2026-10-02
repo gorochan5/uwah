@@ -434,12 +434,37 @@ pub async fn get_profile_picture(
         .map_err(crate::api::http::chats::map_wa_error)?;
 
     match pic_opt {
-        Some(pic) => Ok(Json(ProfilePictureResponse {
-            id: pic.id,
-            url: pic.url,
-            direct_path: pic.direct_path,
-            hash: pic.hash,
-        })),
+        Some(pic) => {
+            let _ = repo::update_profile_pic_url(&session_id, &jid, &pic.url).await;
+
+            let download_url = pic.url.clone();
+            let media_dir = state.config.media.dir.clone();
+            tokio::spawn(async move {
+                if let Ok(resp) = reqwest::get(&download_url).await
+                    && resp.status().is_success()
+                    && let Ok(bytes) = resp.bytes().await
+                {
+                    use sha2::Digest;
+                    let sha256_hex = hex::encode(sha2::Sha256::digest(&bytes));
+                    let file_path = std::path::Path::new(&media_dir).join(format!("{}.jpg", sha256_hex));
+                    let _ = std::fs::create_dir_all(&media_dir);
+                    let _ = tokio::fs::write(&file_path, &bytes).await;
+                    let _ = crate::repository::media_cache::upsert(
+                        &sha256_hex,
+                        file_path.to_string_lossy().as_ref(),
+                        "image/jpeg",
+                        bytes.len() as i64,
+                    ).await;
+                }
+            });
+
+            Ok(Json(ProfilePictureResponse {
+                id: pic.id,
+                url: pic.url,
+                direct_path: pic.direct_path,
+                hash: pic.hash,
+            }))
+        }
         None => Err(AppError::NotFound(format!(
             "Profile picture not available for '{}'",
             jid

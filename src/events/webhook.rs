@@ -31,6 +31,13 @@ pub fn dispatch_event<T>(event_type: &str, session_id: &str, payload: T)
 where
     T: Serialize + Send + 'static,
 {
+    let event = event_type.to_string();
+    let sid = session_id.to_string();
+    let timestamp = chrono::Utc::now().timestamp_millis();
+
+    let payload_val = serde_json::to_value(&payload).unwrap_or(serde_json::Value::Null);
+    crate::events::bus::publish(&sid, &event, payload_val);
+
     let config = crate::config::get();
     let webhook_cfg = match &config.webhook {
         Some(w) if w.enabled => w,
@@ -43,9 +50,6 @@ where
     };
 
     let secret = webhook_cfg.secret.clone();
-    let event = event_type.to_string();
-    let sid = session_id.to_string();
-    let timestamp = chrono::Utc::now().timestamp_millis();
 
     let envelope = WebhookPayload {
         event: event.clone(),
@@ -68,19 +72,23 @@ where
         }
     };
 
-    // Generate HMAC-SHA256 signature if secret is provided
-    let signature_opt = secret.as_deref().and_then(|sec| match sign_payload(sec, &body_bytes) {
-        Ok(sig) => Some(sig),
-        Err(err) => {
-            warn!(
-                event = %event,
-                session_id = %sid,
-                error = %err,
-                "Failed to sign webhook payload; dispatching without signature"
-            );
-            None
+    // Generate HMAC-SHA256 signature if secret is provided (FAIL-CLOSED)
+    let signature_opt = if let Some(sec) = secret.as_deref() {
+        match sign_payload(sec, timestamp, &body_bytes) {
+            Ok(sig) => Some(sig),
+            Err(err) => {
+                error!(
+                    event = %event,
+                    session_id = %sid,
+                    error = %err,
+                    "CRITICAL: Failed to sign webhook payload in fail-closed mode; aborting dispatch"
+                );
+                return;
+            }
         }
-    });
+    } else {
+        None
+    };
 
     // Detached asynchronous HTTP POST dispatch
     tokio::spawn(async move {

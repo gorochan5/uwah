@@ -2,11 +2,11 @@
 
 ## Objetivo
 
-Descrever o fluxo pretendido e separar o que é executável do que está apenas planejado.
+Descrever o fluxo atual e separar capacidades implementadas de lacunas conhecidas.
 
 ## Estado atual
 
-Não existe fluxo executável completo. `src/main.rs` contém um `main` assíncrono, mas há tokens sem definição (`token`, `database_url`, `state`), chamada incompleta de `match`, referências a `db::initialize`/`auth::ensure_admin_token` inexistentes e não há retorno sintaticamente válido após `init(token)`.
+`src/main.rs` inicializa logging, configuração, pool SQLite e migrations; cria `SessionManager`, event bus e router HTTP; hidrata sessões conectadas; inicia outbox e manutenção; sobe o gRPC na porta `service.port + 1`; serve REST e executa shutdown coordenado.
 
 ## Fluxo pretendido
 
@@ -27,11 +27,11 @@ Nenhuma dessas etapas está implementada de ponta a ponta. Há apenas `config::i
 
 ## Configuração e banco
 
-`src/config/mod.rs` define `Config`, `Database`, `Service` e `Media`, valida strings não vazias e porta diferente de zero, mas procura `kronos_pdv.toml`, não `uwah.toml`. A configuração versionada contém caminhos diferentes. `src/database/mod.rs` lê `database.dir`, habilita foreign keys, WAL, `NORMAL`, cria o arquivo e abre pool SQLite com no máximo cinco conexões. A função recebe `token`, mas não o utiliza. Não há chamada real à migration.
+`src/config/mod.rs` define `Config`, `Database`, `Service`, `Media`, `Sessions` e `Webhook`, valida os campos e carrega `uwah.toml`. `src/database/mod.rs` lê `database.dir`, habilita foreign keys, WAL, `NORMAL`, abre pool SQLite com no máximo cinco conexões e executa as migrations.
 
 ## APIs, sessões e eventos
 
-Os diretórios de API e rotas não possuem handlers. Não há criação/recuperação de sessão, QR code, reconexão, envio de mensagem, consumidores de eventos ou shutdown coordenado. `src/repository/sessions.rs` apenas esboça operações SQL.
+As APIs HTTP, o servidor gRPC, a criação/recuperação de sessão, QR code, envio de mensagens, consumidores de eventos e shutdown coordenado estão implementados. O grau de suporte de cada recurso deve ser conferido em `docs/API.md` e nos handlers correspondentes.
 
 ## Erros e observabilidade
 

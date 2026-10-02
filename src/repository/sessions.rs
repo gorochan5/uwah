@@ -145,21 +145,20 @@ pub async fn refresh_qr(id: &str, qr_payload: &str) -> Result<SqliteQueryResult>
     .context("Failed to refresh QR code for session")
 }
 
-pub async fn rename(id_old: &str, id_new: &str) -> Result<SqliteQueryResult> {
-    info!(id_old = id_old, id_new = id_new, "Renaming session in DB");
-
+pub async fn update_status(id: &str, status: &str) -> Result<SqliteQueryResult> {
     let pool = crate::database::get();
     sqlx::query!(
         r#"
         UPDATE sessions
-        SET id = $1,
+        SET status = $1,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
         "#,
-        id_new,
-        id_old
+        status,
+        id
     )
     .execute(pool)
     .await
-    .context("Failed to rename session on DB")
+    .context("Failed to update session status on DB")
 }
+

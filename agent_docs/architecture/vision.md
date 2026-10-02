@@ -1,4 +1,6 @@
-# Visão arquitetural do UWah
+# Visão arquitetural do UWah — estado atual
+
+> Este documento foi revisado em 2026-10-01. Para a referência operacional atual, consulte `README.md` e `docs/`.
 
 ## Objetivo
 
@@ -6,15 +8,15 @@ Registrar a finalidade e o estado real do Unified WhatsApp API Hub (UWah).
 
 ## Visão geral
 
-O UWah é concebido como um serviço Rust que encapsula `whatsapp-rust` e oferece uma fronteira única para consumidores externos, especialmente o Kronos BackOffice. O README descreve duas interfaces pretendidas: REST/HTTP com Axum e gRPC com Tonic, além de sessões múltiplas, persistência SQLite e eventos em tempo real.
+O UWah é um serviço Rust que encapsula `whatsapp-rust` e oferece uma fronteira REST/HTTP com Axum, uma interface gRPC limitada a health/event streaming, sessões múltiplas, persistência SQLite e eventos em tempo real.
 
-No estado do repositório, essa visão ainda não está conectada em uma aplicação funcional: `src/main.rs` não compila, os módulos `src/api`, `src/routes` e `src/security` estão vazios e não há arquivo `.proto` em `proto/`.
+O estado atual conecta essa visão em uma aplicação com inicialização, router HTTP, SessionManager, eventos, migrations e servidor gRPC. Os contratos `.proto` estão em `proto/`; as limitações remanescentes estão registradas em `docs/ARCHITECTURE.md`.
 
 ## Problema e limites
 
-A abstração pretende esconder detalhes do protocolo WhatsApp e oferecer contratos estáveis para sistemas de negócio. A responsabilidade do UWah seria administrar sessões, traduzir operações de mensagens/contatos/grupos/chamadas e materializar dados locais. Não há código que demonstre ainda integração com Kronos, um gerenciador de sessões ou processamento de eventos.
+A abstração esconde detalhes do protocolo WhatsApp e oferece contratos para sistemas de negócio. A responsabilidade do UWah é administrar sessões, traduzir operações de mensagens/contatos/grupos/chamadas e materializar dados locais. Não há integração específica com Kronos documentada no código.
 
-O projeto não é, atualmente, um CRM, um banco de dados distribuído, um provedor de WhatsApp independente nem uma API pública pronta para produção. `whatsapp-rust = 0.7.0` aparece no `Cargo.toml`, mas não é referenciado pelo código-fonte existente.
+O projeto não é um CRM, um banco de dados distribuído nem uma API pública pronta para produção. A integração com `whatsapp-rust = 0.7.0` é usada pelo `SessionManager` para os workers de sessão.
 
 ## Componentes e dependências
 
@@ -22,14 +24,14 @@ O projeto não é, atualmente, um CRM, um banco de dados distribuído, um proved
 * Axum e Tonic são dependências declaradas para HTTP e gRPC.
 * SQLx/SQLite sustentam o schema e repositórios esboçados.
 * `uwah.toml` descreve banco, serviço, mídia e um valor `service.auth`.
-* A rede WhatsApp e `whatsapp-rust` são dependências externas planejadas.
+* A rede WhatsApp e `whatsapp-rust` são dependências usadas pelo SessionManager.
 
 ## Diferenciais e evolução
 
-Multi-sessão, API dupla e separação entre modelos/repositórios/interfaces são objetivos arquiteturais documentados no README e refletidos na árvore de diretórios. Streaming gRPC, cache de mídia e eventos são propostas do README, não capacidades verificáveis na implementação atual.
+Multi-sessão, API REST, streaming gRPC de eventos, cache de mídia, eventos SSE/WebSocket e outbox de webhooks estão representados na implementação atual. A autenticação gRPC e TLS permanecem ausentes.
 
 ## Estado atual
 
-O schema inicial e os modelos Rust existem parcialmente; acesso SQL CRUD foi esboçado. Inicialização, APIs, autenticação, integração WhatsApp, eventos, cache em disco e migrações executadas permanecem pendentes.
+O schema, os modelos, os repositórios CRUD, as APIs, a autenticação HTTP, a integração de sessões, os eventos, o cache em disco e a execução automática de migrations estão implementados em diferentes níveis de completude. A fonte autoritativa do schema é `migrations/`.
 
 Consulte [workflow.md](workflow.md), [api/http.md](api/http.md), [api/grpc.md](api/grpc.md) e [database/schema.md](database/schema.md).

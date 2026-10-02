@@ -37,7 +37,45 @@ pub struct ExtractedMessage {
     pub is_revoked: bool,
 }
 
-pub fn extract_message_content(msg: &wa::Message) -> ExtractedMessage {
+pub fn unwrap_base_message(mut msg: &wa::Message) -> &wa::Message {
+    loop {
+        if let Some(ephem) = msg.ephemeral_message.as_option()
+            && let Some(inner) = ephem.message.as_option() {
+            msg = inner;
+            continue;
+        }
+        if let Some(vo) = msg.view_once_message.as_option()
+            && let Some(inner) = vo.message.as_option() {
+            msg = inner;
+            continue;
+        }
+        if let Some(vo2) = msg.view_once_message_v2.as_option()
+            && let Some(inner) = vo2.message.as_option() {
+            msg = inner;
+            continue;
+        }
+        if let Some(vo2_ext) = msg.view_once_message_v2_extension.as_option()
+            && let Some(inner) = vo2_ext.message.as_option() {
+            msg = inner;
+            continue;
+        }
+        if let Some(doc) = msg.document_with_caption_message.as_option()
+            && let Some(inner) = doc.message.as_option() {
+            msg = inner;
+            continue;
+        }
+        if let Some(dev) = msg.device_sent_message.as_option()
+            && let Some(inner) = dev.message.as_option() {
+            msg = inner;
+            continue;
+        }
+        break;
+    }
+    msg
+}
+
+pub fn extract_message_content(raw_msg: &wa::Message) -> ExtractedMessage {
+    let msg = unwrap_base_message(raw_msg);
     if let Some(text) = &msg.conversation {
         ExtractedMessage {
             message_type: "text".to_string(),
@@ -128,6 +166,95 @@ pub fn extract_message_content(msg: &wa::Message) -> ExtractedMessage {
             message_type: "sticker".to_string(),
             body: None,
             media: Some(extract_media(stk)),
+            quoted_message_id: quoted_id,
+            edit_target_id: None,
+            is_edited: false,
+            is_revoked: false,
+        }
+    } else if let Some(loc) = msg.location_message.as_option() {
+        let quoted_id = loc
+            .context_info
+            .as_option()
+            .and_then(|c| c.stanza_id.clone());
+        let loc_info = serde_json::json!({
+            "latitude": loc.degrees_latitude,
+            "longitude": loc.degrees_longitude,
+            "name": loc.name,
+            "address": loc.address,
+            "url": loc.url,
+            "comment": loc.comment,
+        });
+        ExtractedMessage {
+            message_type: "location".to_string(),
+            body: Some(loc_info.to_string()),
+            media: None,
+            quoted_message_id: quoted_id,
+            edit_target_id: None,
+            is_edited: false,
+            is_revoked: false,
+        }
+    } else if let Some(live_loc) = msg.live_location_message.as_option() {
+        let quoted_id = live_loc
+            .context_info
+            .as_option()
+            .and_then(|c| c.stanza_id.clone());
+        let loc_info = serde_json::json!({
+            "latitude": live_loc.degrees_latitude,
+            "longitude": live_loc.degrees_longitude,
+            "caption": live_loc.caption,
+            "accuracy": live_loc.accuracy_in_meters,
+            "speed": live_loc.speed_in_mps,
+        });
+        ExtractedMessage {
+            message_type: "live_location".to_string(),
+            body: Some(loc_info.to_string()),
+            media: None,
+            quoted_message_id: quoted_id,
+            edit_target_id: None,
+            is_edited: false,
+            is_revoked: false,
+        }
+    } else if let Some(contact) = msg.contact_message.as_option() {
+        let quoted_id = contact
+            .context_info
+            .as_option()
+            .and_then(|c| c.stanza_id.clone());
+        let contact_info = serde_json::json!({
+            "display_name": contact.display_name,
+            "vcard": contact.vcard,
+        });
+        ExtractedMessage {
+            message_type: "contact".to_string(),
+            body: Some(contact_info.to_string()),
+            media: None,
+            quoted_message_id: quoted_id,
+            edit_target_id: None,
+            is_edited: false,
+            is_revoked: false,
+        }
+    } else if let Some(contacts) = msg.contacts_array_message.as_option() {
+        let quoted_id = contacts
+            .context_info
+            .as_option()
+            .and_then(|c| c.stanza_id.clone());
+        let contact_list: Vec<_> = contacts
+            .contacts
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "display_name": c.display_name,
+                    "vcard": c.vcard,
+                })
+            })
+            .collect();
+        let contact_info = serde_json::json!({
+            "display_name": contacts.display_name,
+            "contacts": contact_list,
+        });
+        ExtractedMessage {
+            message_type: "contacts_array".to_string(),
+            body: Some(contact_info.to_string()),
+            media: None,
             quoted_message_id: quoted_id,
             edit_target_id: None,
             is_edited: false,

@@ -6,7 +6,7 @@ Descrever o schema declarado em `migrations/20260909173149_init.sql`.
 
 ## Visão geral
 
-O banco pretendido é SQLite via SQLx. A migration cria sete tabelas; não há índices adicionais, triggers ou histórico de migrations além desse arquivo. A execução da migration não aparece no código.
+O banco atual é SQLite via SQLx. As migrations criam as tabelas de gateway, índices e estruturas de outbox/DLQ/metadados. A execução ocorre automaticamente em `src/database/mod.rs`; consulte `docs/DATABASE.md` para o resumo atual.
 
 | Tabela | Chave primária | Relações principais |
 |---|---|---|
@@ -34,4 +34,4 @@ Foreign keys usam `ON DELETE CASCADE` para dados dependentes da sessão/chat e `
 
 ## Inicialização
 
-`src/database/mod.rs` habilita foreign keys e WAL, mas não lê a migration. O pool usa até cinco conexões. A existência de arquivos SQLite no workspace não é evidência de que o serviço os inicializa corretamente.
+`src/database/mod.rs` habilita foreign keys e WAL, executa as migrations e usa até cinco conexões. A manutenção periódica faz checkpoint WAL e vacuum incremental.

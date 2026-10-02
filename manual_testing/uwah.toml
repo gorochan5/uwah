@@ -1,0 +1,19 @@
+[database]
+dir = "r:/projects/rust/uwah/manual_testing/uwah.db"
+
+[service]
+host = "localhost"
+port = 6767
+auth = "123"
+
+[media]
+dir = "r:/projects/rust/uwah/manual_testing/media"
+
+[sessions]
+dir = "r:/projects/rust/uwah/manual_testing/sessions"
+
+# [webhook]
+# enabled = false
+# url = "http://localhost:8080/webhook"
+# secret = "my_secure_webhook_secret"
+

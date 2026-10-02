@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service MessageService {
+  rpc ListMessages (ListMessagesRequest) returns (ListMessagesResponse);
+  rpc SendMessage (SendMessageRequest) returns (MessageItem);
+  rpc SendLocation (SendLocationRequest) returns (MessageItem);
+  rpc SendContact (SendContactRequest) returns (MessageItem);
+  rpc SendMedia (SendMediaRequest) returns (MessageItem);
+  rpc EditMessage (EditMessageRequest) returns (MessageActionResponse);
+  rpc DeleteMessage (DeleteMessageRequest) returns (DeleteMessageResponse);
+  rpc ReactMessage (ReactMessageRequest) returns (MessageActionResponse);
+  rpc RevokeMessage (RevokeMessageRequest) returns (MessageActionResponse);
+}
+
+message MessageItem {
+  string session_id = 1;
+  string id = 2;
+  string chat_jid = 3;
+  string sender_jid = 4;
+  optional string quoted_message_id = 5;
+  bool is_from_me = 6;
+  string message_type = 7;
+  optional string body = 8;
+  optional string cdn_url = 9;
+  optional bytes media_key = 10;
+  optional string file_enc_sha256 = 11;
+  optional string media_sha256 = 12;
+  string delivery_status = 13;
+  bool is_edited = 14;
+  bool is_deleted = 15;
+  int64 timestamp = 16;
+}
+
+message ListMessagesRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  optional int64 limit = 3;
+  optional int64 before = 4;
+}
+
+message ListMessagesResponse {
+  repeated MessageItem messages = 1;
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  optional string body = 3;
+  optional string message_type = 4;
+  optional string quoted_message_id = 5;
+}
+
+message SendLocationRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  double latitude = 3;
+  double longitude = 4;
+  optional string name = 5;
+  optional string address = 6;
+  optional string url = 7;
+  optional string quoted_message_id = 8;
+}
+
+message SendContactRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  string display_name = 3;
+  string vcard = 4;
+  optional string quoted_message_id = 5;
+}
+
+message SendMediaRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  string data_base64 = 3;
+  string media_type = 4;
+  string mimetype = 5;
+  optional string caption = 6;
+  optional string filename = 7;
+  optional string quoted_message_id = 8;
+  optional bool is_voice_note = 9;
+}
+
+message EditMessageRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  string message_id = 3;
+  string body = 4;
+}
+
+message DeleteMessageRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  string message_id = 3;
+}
+
+message DeleteMessageResponse {
+  bool success = 1;
+}
+
+message ReactMessageRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  string message_id = 3;
+  string emoji = 4;
+}
+
+message RevokeMessageRequest {
+  string session_id = 1;
+  string chat_jid = 2;
+  string message_id = 3;
+}
+
+message MessageActionResponse {
+  string message_id = 1;
+  string status = 2;
+}

@@ -13,10 +13,10 @@
 
 - 🔗 **Multi-Session Isolation** — Each WhatsApp account runs its own background bot worker with isolated Signal protocol storage (`sessions/{id}.db`).
 - ⚡ **Instant Messaging & Quotes** — Real-time outbound message dispatch and inbound message interception with full **quoted reply** (`quoted_message_id`) context support.
-- 📱 **Zero-Dependency QR Portal** — Pure vector SVG QR code rendering via **Maud + HTMX** (`/sessions/:id/scan?token=123`) without page refreshes or external image crates.
-- 📖 **Interactive Swagger UI** — Built-in OpenAPI 3.1 interface at `/swagger?key=123` powered by `utoipa` and `utoipa-swagger-ui`.
+- 📱 **QR Portal** — Vector SVG QR rendering via **Maud + HTMX** (`/sessions/:id/scan?token=123`). The portal validates its browser token separately from the protected REST routes.
+- 📖 **Interactive Swagger UI** — Built-in OpenAPI 3.1 interface at `/swagger` powered by `utoipa` and `utoipa-swagger-ui`; browser access may use `?key=` or `?token=`.
 - 🗄️ **Hardened SQLite Concurrency** — Application database (`uwah.db`) operating in WAL mode with `busy_timeout(30s)` and idempotent upserts to eliminate lock contention.
-- 🔒 **Dual-Mode Security** — Authenticates via `Authorization: Bearer <token>` or browser query string (`?key=<token>` / `?token=<token>`), supporting plaintext or SHA-256 hash matching.
+- 🔒 **HTTP Security** — Protected REST routes require `Authorization: Bearer <token>`. Swagger and the scan portal additionally support browser query tokens, with plaintext or SHA-256 digest matching.
 
 ---
 
@@ -166,6 +166,13 @@ For in-depth guides, consult the dedicated documentation files:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System internals, dual-database design, and event loop lifecycles.
 - [docs/API.md](docs/API.md) — Complete REST endpoint reference and request/response specifications.
 - [docs/DATABASE.md](docs/DATABASE.md) — Schema definitions, indexing, WAL configuration, and SQLite concurrency tuning.
+- [docs/WEBHOOKS.md](docs/WEBHOOKS.md) — Webhook configuration, signatures, retries, outbox and DLQ operations.
+
+### Current limitations
+
+- The gRPC services currently expose health checks and event streaming; no gRPC authentication interceptor is configured.
+- The readiness probe currently checks the fixed `data/media_cache` directory rather than `[media].dir`.
+- The REST and gRPC listeners are plain TCP. TLS must be provided by an external proxy or added to the service.
 
 ---
 

@@ -25,6 +25,10 @@ pub async fn init() -> Result<SqlitePool> {
     .journal_mode(SqliteJournalMode::Wal)
     .synchronous(SqliteSynchronous::Normal)
     .busy_timeout(std::time::Duration::from_secs(30))
+    .pragma("cache_size", "-64000")
+    .pragma("mmap_size", "268435456")
+    .pragma("temp_store", "MEMORY")
+    .pragma("auto_vacuum", "INCREMENTAL")
     .create_if_missing(true);
 
     let db = SqlitePoolOptions::new()

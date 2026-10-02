@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service CallService {
+  rpc ListCalls (ListCallsRequest) returns (ListCallsResponse);
+  rpc GetCall (GetCallRequest) returns (CallItem);
+  rpc DeleteCall (DeleteCallRequest) returns (DeleteCallResponse);
+  rpc RejectCall (RejectCallRequest) returns (CallItem);
+}
+
+message CallItem {
+  string session_id = 1;
+  string id = 2;
+  string chat_jid = 3;
+  string caller_jid = 4;
+  bool is_video = 5;
+  bool is_group_call = 6;
+  string status = 7;
+  optional int64 duration_seconds = 8;
+  int64 created_at = 9;
+  optional int64 ended_at = 10;
+}
+
+message ListCallsRequest {
+  string session_id = 1;
+}
+
+message ListCallsResponse {
+  repeated CallItem calls = 1;
+}
+
+message GetCallRequest {
+  string session_id = 1;
+  string call_id = 2;
+}
+
+message DeleteCallRequest {
+  string session_id = 1;
+  string call_id = 2;
+}
+
+message DeleteCallResponse {
+  bool success = 1;
+}
+
+message RejectCallRequest {
+  string session_id = 1;
+  string call_id = 2;
+}

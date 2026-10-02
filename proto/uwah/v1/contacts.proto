@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service ContactService {
+  rpc ListContacts (ListContactsRequest) returns (ListContactsResponse);
+  rpc UpsertContact (UpsertContactRequest) returns (ContactItem);
+  rpc SyncContacts (SyncContactsRequest) returns (SyncContactsResponse);
+  rpc CheckContacts (CheckContactsRequest) returns (CheckContactsResponse);
+  rpc GetContact (GetContactRequest) returns (ContactItem);
+  rpc DeleteContact (DeleteContactRequest) returns (DeleteContactResponse);
+  rpc GetProfilePicture (GetProfilePictureRequest) returns (GetProfilePictureResponse);
+  rpc BlockContact (BlockContactRequest) returns (ContactActionResponse);
+  rpc UnblockContact (UnblockContactRequest) returns (ContactActionResponse);
+}
+
+message ContactItem {
+  string session_id = 1;
+  string jid = 2;
+  optional string lid_jid = 3;
+  optional string phone_number = 4;
+  optional string push_name = 5;
+  optional string status_text = 6;
+  optional string profile_pic_url = 7;
+  bool is_business = 8;
+  optional string username = 9;
+  optional string devices = 10;
+  optional string verified_name = 11;
+  int64 updated_at = 12;
+}
+
+message ListContactsRequest {
+  string session_id = 1;
+  optional int64 limit = 2;
+  optional int64 offset = 3;
+}
+
+message ListContactsResponse {
+  repeated ContactItem contacts = 1;
+}
+
+message UpsertContactRequest {
+  string session_id = 1;
+  string jid = 2;
+  optional string lid_jid = 3;
+  optional string phone_number = 4;
+  optional string push_name = 5;
+  optional string status_text = 6;
+  optional string profile_pic_url = 7;
+  optional bool is_business = 8;
+  optional string username = 9;
+  optional string devices = 10;
+  optional string verified_name = 11;
+}
+
+message SyncContactsRequest {
+  string session_id = 1;
+  repeated UpsertContactRequest contacts = 2;
+}
+
+message SyncContactsResponse {
+  int64 synced_count = 1;
+}
+
+message CheckContactsRequest {
+  string session_id = 1;
+  repeated string contacts = 2;
+}
+
+message ContactStatusItem {
+  string input = 1;
+  string jid = 2;
+  bool is_registered = 3;
+  bool is_business = 4;
+  optional string lid = 5;
+  optional string pn_jid = 6;
+  optional string verified_name = 7;
+  optional string error = 8;
+}
+
+message CheckContactsResponse {
+  repeated ContactStatusItem results = 1;
+}
+
+message GetContactRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message DeleteContactRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message DeleteContactResponse {
+  bool success = 1;
+}
+
+message GetProfilePictureRequest {
+  string session_id = 1;
+  string jid = 2;
+  optional bool preview = 3;
+}
+
+message GetProfilePictureResponse {
+  string id = 1;
+  string url = 2;
+  optional string direct_path = 3;
+  optional string hash = 4;
+}
+
+message BlockContactRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message UnblockContactRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message ContactActionResponse {
+  string session_id = 1;
+  string jid = 2;
+  string status = 3;
+}

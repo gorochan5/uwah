@@ -270,6 +270,71 @@ pub async fn create(message: &Message) -> Result<SqliteQueryResult> {
     .context("Failed to insert message into DB")
 }
 
+pub async fn create_batch(messages: &[Message]) -> Result<()> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+    let pool = crate::database::get();
+
+    for chunk in messages.chunks(200) {
+        let mut builder = sqlx::QueryBuilder::new(
+            "INSERT INTO messages (
+                id, session_id, chat_jid, sender_jid, quoted_message_id,
+                is_from_me, message_type, body, cdn_url, media_key,
+                file_enc_sha256, media_sha256, delivery_status, is_edited,
+                is_deleted, timestamp
+            ) ",
+        );
+
+        builder.push_values(chunk, |mut b, msg| {
+            b.push_bind(&msg.id)
+                .push_bind(&msg.session_id)
+                .push_bind(&msg.chat_jid)
+                .push_bind(&msg.sender_jid)
+                .push_bind(&msg.quoted_message_id)
+                .push_bind(msg.is_from_me)
+                .push_bind(&msg.message_type)
+                .push_bind(&msg.body)
+                .push_bind(&msg.cdn_url)
+                .push_bind(&msg.media_key)
+                .push_bind(&msg.file_enc_sha256)
+                .push_bind(&msg.media_sha256)
+                .push_bind(&msg.delivery_status)
+                .push_bind(msg.is_edited)
+                .push_bind(msg.is_deleted)
+                .push_bind(msg.timestamp);
+        });
+
+        builder.push(
+            " ON CONFLICT(id, session_id) DO UPDATE SET
+                delivery_status = CASE
+                    WHEN messages.delivery_status = 'read' THEN 'read'
+                    WHEN messages.delivery_status = 'delivered' AND excluded.delivery_status IN ('pending', 'sent', 'received') THEN messages.delivery_status
+                    ELSE excluded.delivery_status
+                END,
+                body = CASE
+                    WHEN excluded.is_edited = 1 THEN excluded.body
+                    WHEN messages.is_edited = 1 THEN messages.body
+                    ELSE COALESCE(excluded.body, messages.body)
+                END,
+                is_edited = messages.is_edited OR excluded.is_edited,
+                is_deleted = messages.is_deleted OR excluded.is_deleted,
+                cdn_url = COALESCE(excluded.cdn_url, messages.cdn_url),
+                media_key = COALESCE(excluded.media_key, messages.media_key),
+                file_enc_sha256 = COALESCE(excluded.file_enc_sha256, messages.file_enc_sha256),
+                media_sha256 = COALESCE(excluded.media_sha256, messages.media_sha256)",
+        );
+
+        builder
+            .build()
+            .execute(pool)
+            .await
+            .context("Failed to insert message batch into DB")?;
+    }
+
+    Ok(())
+}
+
 pub async fn update_delivery_status(
     session_id: &str,
     message_ids: &[String],
@@ -280,25 +345,28 @@ pub async fn update_delivery_status(
     }
 
     let pool = crate::database::get();
-    for msg_id in message_ids {
-        sqlx::query!(
-            r#"
-            UPDATE messages
-            SET delivery_status = CASE
-                WHEN delivery_status = 'read' THEN 'read'
-                WHEN delivery_status = 'delivered' AND $1 IN ('pending', 'sent', 'received') THEN delivery_status
-                ELSE $1
-            END
-            WHERE id = $2 AND session_id = $3
-            "#,
-            status,
-            msg_id,
-            session_id
-        )
+    let mut builder = sqlx::QueryBuilder::new(
+        "UPDATE messages SET delivery_status = CASE \
+            WHEN delivery_status = 'read' THEN 'read' \
+            WHEN delivery_status = 'delivered' AND ",
+    );
+    builder.push_bind(status);
+    builder.push(" IN ('pending', 'sent', 'received') THEN delivery_status ELSE ");
+    builder.push_bind(status);
+    builder.push(" END WHERE session_id = ");
+    builder.push_bind(session_id);
+    builder.push(" AND id IN (");
+    let mut separated = builder.separated(", ");
+    for id in message_ids {
+        separated.push_bind(id);
+    }
+    separated.push_unseparated(")");
+
+    let query = builder.build();
+    query
         .execute(pool)
         .await
-        .context("Failed to update message delivery status")?;
-    }
+        .context("Failed to update message delivery status in batch")?;
 
     Ok(())
 }

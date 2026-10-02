@@ -99,3 +99,28 @@ To guarantee cryptographic integrity and complete isolation between sessions, **
 4. **Outbound Messaging Pipeline**:
    The REST API retrieves the `Arc<Client>` from `SessionManager`, builds a WhatsApp `wa::Message` (with `ContextInfo` when `quoted_message_id` is present), and dispatches asynchronously through WhatsApp's encrypted channel.
 
+## 5. Event and delivery paths
+
+Gateway events are published to an in-process broadcast bus and can be consumed through:
+
+- HTTP SSE at `/events` or `/sessions/{id}/events`;
+- HTTP WebSocket at `/ws` or `/sessions/{id}/ws`;
+- gRPC `EventStreamService.StreamEvents`, optionally filtered by `session_id`.
+
+Configured webhooks are delivered through a transactional outbox worker. Failed deliveries are retried and eventually moved to `webhook_dlq`, which is operable through the protected `/webhooks/dlq` endpoints as well as the gRPC `WebhookDlqService`. See [WEBHOOKS.md](WEBHOOKS.md).
+
+## 6. gRPC Microservices Subsystem
+
+Uwah exposes a high-throughput gRPC endpoint on `service.port + 1` (default `6768`) offering 100% functional parity with the REST layer across 11 Tonic services:
+- **Service Discovery**: Enabled via gRPC Server Reflection Protocol v1 (`tonic-reflection`), allowing dynamic inspection with `grpcurl` or GUI clients.
+- **Service Modules**: `HealthService`, `EventStreamService`, `SessionService`, `ChatService`, `GroupService`, `GroupParticipantService`, `MessageService`, `ContactService`, `CallService`, `MediaService`, and `WebhookDlqService`.
+- **Media & Event Streaming**: Native HTTP/2 chunked streaming for both file downloads (`64KB` chunks) and upload pipelines, as well as real-time event broadcasting.
+- See detailed protocol specs in [docs/GRPC.md](GRPC.md).
+
+## 7. Operational boundaries
+
+REST protected routes require a Bearer token. Swagger and the scan portal have browser-specific query-token handling. The gRPC server is protected by a Tonic metadata interceptor requiring `authorization: Bearer <token>` validated against `[service].auth` in constant time (returning `unauthenticated` on any failure). Neither HTTP nor gRPC listeners configure TLS internally (TLS termination should be handled by a reverse proxy or ingress).
+
+The startup probe confirms that the `sessions` table can be queried. The readiness probe checks the database, active-session count and storage health.
+
+

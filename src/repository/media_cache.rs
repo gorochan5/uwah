@@ -221,6 +221,20 @@ pub async fn prune_unreferenced() -> Result<Vec<MediaCache>> {
         return Ok(Vec::new());
     }
 
+    // 1. Physically delete files on disk first
+    for entry in &unreferenced {
+        if let Err(err) = tokio::fs::remove_file(&entry.disk_path).await
+            && err.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                sha256 = %entry.sha256,
+                path = %entry.disk_path,
+                error = %err,
+                "Failed to delete pruned media file from disk"
+            );
+        }
+    }
+
+    // 2. Delete database rows within transaction
     let mut tx = pool
         .begin()
         .await
@@ -243,7 +257,7 @@ pub async fn prune_unreferenced() -> Result<Vec<MediaCache>> {
 
     info!(
         count = unreferenced.len(),
-        "Pruned unreferenced media records from database"
+        "Pruned unreferenced media records and physical files"
     );
     Ok(unreferenced)
 }

@@ -60,14 +60,45 @@ pub struct ParticipantActionResponse {
     )
 )]
 pub async fn list_participants(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path((session_id, group_jid)): Path<(String, String)>,
 ) -> AppResult<Json<Vec<GroupParticipant>>> {
     let _ = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let participants = repo::get_by_group(&session_id, &group_jid).await?;
+    let mut participants = repo::get_by_group(&session_id, &group_jid).await?;
+
+    if participants.is_empty()
+        && let Some(client) = state.sessions.get_client(&session_id).await
+        && let Ok(parsed_group_jid) = parse_group_jid(&group_jid)
+        && let Ok(metadata) = client.groups().get_metadata(&parsed_group_jid).await
+    {
+        let now = chrono::Utc::now();
+        let mut fresh_list = Vec::new();
+        for p in metadata.participants {
+            let role = if p.is_super_admin() {
+                "superadmin"
+            } else if p.is_admin() {
+                "admin"
+            } else {
+                "member"
+            };
+            let gp = GroupParticipant {
+                session_id: session_id.clone(),
+                group_jid: group_jid.clone(),
+                user_jid: p.jid.to_string(),
+                role: role.to_string(),
+                joined_at: now,
+            };
+            let _ = repo::upsert(&gp).await;
+            fresh_list.push(gp);
+        }
+        if !fresh_list.is_empty() {
+            participants = fresh_list;
+        }
+    }
+
     Ok(Json(participants))
 }
 

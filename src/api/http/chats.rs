@@ -905,6 +905,278 @@ pub async fn leave_group(
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+pub struct JoinGroupRequest {
+    /// Group invite code or full invite URL (e.g. "AbCdEf12345" or "https://chat.whatsapp.com/AbCdEf12345")
+    #[schema(example = "AbCdEf12345")]
+    pub invite_code: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct JoinGroupResponse {
+    pub group_jid: String,
+    pub status: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/groups/join",
+    tag = "Groups",
+    summary = "Join group via invite link",
+    description = "Accepts a WhatsApp group invitation link or code and joins the bot to the group.",
+    params(
+        ("id" = String, Path, description = "Session identifier")
+    ),
+    request_body = JoinGroupRequest,
+    responses(
+        (status = 200, description = "Joined group successfully", body = JoinGroupResponse),
+        (status = 400, description = "Invalid invite code or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn join_group(
+    State(state): State<Arc<AppState>>,
+    Path(session_id): Path<String>,
+    Json(body): Json<JoinGroupRequest>,
+) -> AppResult<Json<JoinGroupResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let raw_code = body.invite_code.trim();
+    let code = if let Some(stripped) = raw_code.strip_prefix("https://chat.whatsapp.com/") {
+        stripped.trim()
+    } else if let Some(stripped) = raw_code.strip_prefix("chat.whatsapp.com/") {
+        stripped.trim()
+    } else {
+        raw_code
+    };
+
+    if code.is_empty() {
+        return Err(AppError::BadRequest("Invite code cannot be empty".to_string()));
+    }
+
+    let join_res = client
+        .groups()
+        .join_with_invite_code(code)
+        .await
+        .map_err(map_wa_error)?;
+
+    let group_jid_str = join_res.group_jid().to_string();
+    let status_str = match join_res {
+        whatsapp_rust::JoinGroupResult::Joined(_) => "joined",
+        whatsapp_rust::JoinGroupResult::PendingApproval(_) => "pending_approval",
+    };
+
+    let _ = crate::repository::chats::ensure_exists(&group_jid_str, &session_id).await;
+
+    Ok(Json(JoinGroupResponse {
+        group_jid: group_jid_str,
+        status: status_str.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetAnnouncementRequest {
+    /// True if only administrators can send messages; false if all participants can send messages
+    pub announcement: bool,
+}
+
+#[utoipa::path(
+    put,
+    path = "/sessions/{id}/chats/{jid}/settings/announcement",
+    tag = "Groups",
+    summary = "Set group announcement mode",
+    description = "Configures whether only admins or all members can send messages to the group.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Group WhatsApp JID")
+    ),
+    request_body = SetAnnouncementRequest,
+    responses(
+        (status = 200, description = "Announcement setting updated", body = ChatActionResponse),
+        (status = 400, description = "Not a group or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 403, description = "Forbidden (admin permissions required)", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn set_group_announcement(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Json(body): Json<SetAnnouncementRequest>,
+) -> AppResult<Json<ChatActionResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let group_jid = parse_group_jid(&jid)?;
+
+    client
+        .groups()
+        .set_announce(&group_jid, body.announcement)
+        .await
+        .map_err(map_wa_error)?;
+
+    Ok(Json(ChatActionResponse {
+        jid,
+        status: if body.announcement {
+            "announcement_enabled".to_string()
+        } else {
+            "announcement_disabled".to_string()
+        },
+    }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetLockRequest {
+    /// True if only administrators can modify group subject, description and icon; false for all members
+    pub locked: bool,
+}
+
+#[utoipa::path(
+    put,
+    path = "/sessions/{id}/chats/{jid}/settings/lock",
+    tag = "Groups",
+    summary = "Set group lock / restrict mode",
+    description = "Configures whether only admins or all members can modify group subject, description, and avatar.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Group WhatsApp JID")
+    ),
+    request_body = SetLockRequest,
+    responses(
+        (status = 200, description = "Lock setting updated", body = ChatActionResponse),
+        (status = 400, description = "Not a group or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 403, description = "Forbidden (admin permissions required)", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn set_group_lock(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Json(body): Json<SetLockRequest>,
+) -> AppResult<Json<ChatActionResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let group_jid = parse_group_jid(&jid)?;
+
+    client
+        .groups()
+        .set_locked(&group_jid, body.locked)
+        .await
+        .map_err(map_wa_error)?;
+
+    Ok(Json(ChatActionResponse {
+        jid,
+        status: if body.locked {
+            "locked".to_string()
+        } else {
+            "unlocked".to_string()
+        },
+    }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SetEphemeralRequest {
+    /// Disappearing message timer in seconds (0 = off, 86400 = 24h, 604800 = 7d, 7776000 = 90d)
+    #[schema(example = 604800)]
+    pub ephemeral_duration_seconds: u32,
+}
+
+#[utoipa::path(
+    put,
+    path = "/sessions/{id}/chats/{jid}/settings/ephemeral",
+    tag = "Chats",
+    summary = "Set disappearing messages timer",
+    description = "Configures or disables ephemeral disappearing messages timer for the chat.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "WhatsApp chat or group JID")
+    ),
+    request_body = SetEphemeralRequest,
+    responses(
+        (status = 200, description = "Ephemeral timer updated", body = ChatActionResponse),
+        (status = 400, description = "Invalid duration or inactive session", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn set_ephemeral_timer(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Json(body): Json<SetEphemeralRequest>,
+) -> AppResult<Json<ChatActionResponse>> {
+    let _ = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let target_jid = parse_target_jid(&jid)?;
+
+    client
+        .groups()
+        .set_ephemeral(&target_jid, body.ephemeral_duration_seconds)
+        .await
+        .map_err(map_wa_error)?;
+
+    Ok(Json(ChatActionResponse {
+        jid,
+        status: format!("ephemeral_{}s", body.ephemeral_duration_seconds),
+    }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetChatStateRequest {
     /// Chat ephemeral state: "composing" (typing), "recording" (audio), or "paused" (idle)
     #[schema(example = "composing")]

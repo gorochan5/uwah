@@ -1,4 +1,6 @@
-# Chamadas de voz e vídeo
+# Chamadas de voz e vídeo — estado atual
+
+> Histórico e rejeição de chamadas possuem handlers em `src/api/http/calls.rs`. Consulte `docs/API.md`; este arquivo contém notas históricas de implementação.
 
 ## Objetivo
 

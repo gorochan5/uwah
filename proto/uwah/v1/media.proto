@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service MediaService {
+  rpc DownloadMedia (DownloadMediaRequest) returns (stream MediaChunk);
+  rpc UploadMedia (stream UploadMediaChunk) returns (UploadMediaResponse);
+  rpc UploadMediaUnary (UploadMediaUnaryRequest) returns (UploadMediaResponse);
+}
+
+message DownloadMediaRequest {
+  string session_id = 1;
+  string sha256 = 2;
+  optional int64 offset = 3;
+  optional int64 length = 4;
+}
+
+message MediaChunk {
+  bytes data = 1;
+  string mime_type = 2;
+  int64 total_size = 3;
+  int64 offset = 4;
+}
+
+message UploadMediaMetadata {
+  string session_id = 1;
+  string mime_type = 2;
+  optional string filename = 3;
+}
+
+message UploadMediaChunk {
+  oneof data {
+    UploadMediaMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+message UploadMediaUnaryRequest {
+  string session_id = 1;
+  bytes data = 2;
+  string mime_type = 3;
+  optional string filename = 4;
+}
+
+message UploadMediaResponse {
+  string sha256 = 1;
+  string disk_path = 2;
+  string mime_type = 3;
+  int64 file_size = 4;
+  string url = 5;
+}

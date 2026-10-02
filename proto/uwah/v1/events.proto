@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service EventStreamService {
+  rpc StreamEvents (StreamEventsRequest) returns (stream GatewayEventEnvelope);
+}
+
+message StreamEventsRequest {
+  optional string session_id = 1;
+}
+
+message GatewayEventEnvelope {
+  string event_id = 1;
+  string session_id = 2;
+  string event_type = 3;
+  int64 timestamp = 4;
+  string payload_json = 5;
+}

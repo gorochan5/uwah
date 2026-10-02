@@ -63,6 +63,7 @@ pub async fn get_session(
     State(_state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<Json<Session>> {
+    crate::security::validate_session_id(&id)?;
     let session = repo::get_one(&id).await?;
     match session {
         Some(s) => Ok(Json(s)),
@@ -90,11 +91,7 @@ pub async fn create_session(
     Json(req): Json<CreateSessionRequest>,
 ) -> AppResult<(StatusCode, Json<Session>)> {
     let id = req.id.trim();
-    if id.is_empty() {
-        return Err(AppError::BadRequest(
-            "Session id cannot be empty".to_string(),
-        ));
-    }
+    crate::security::validate_session_id(id)?;
 
     if repo::get_one(id).await?.is_some() {
         return Err(AppError::Conflict(format!(
@@ -142,6 +139,7 @@ pub async fn refresh_qr(
     Path(id): Path<String>,
     Json(req): Json<RefreshQrRequest>,
 ) -> AppResult<Json<Session>> {
+    crate::security::validate_session_id(&id)?;
     let _ = repo::get_one(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", id)))?;
@@ -175,12 +173,13 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
+    crate::security::validate_session_id(&id)?;
     let _ = repo::get_one(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", id)))?;
 
-    // Stop active bot if running
-    state.sessions.stop_session(&id).await;
+    // Stop active bot and clean up filesystem keystore files
+    state.sessions.delete_session_files(&id).await;
 
     repo::delete(&id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -212,6 +211,7 @@ pub async fn restart_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<Json<SessionActionResponse>> {
+    crate::security::validate_session_id(&id)?;
     let _ = repo::get_one(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", id)))?;
@@ -250,6 +250,7 @@ pub async fn logout_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> AppResult<Json<SessionActionResponse>> {
+    crate::security::validate_session_id(&id)?;
     let session = repo::get_one(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", id)))?;
@@ -317,6 +318,7 @@ pub async fn request_pairing_code(
     Path(id): Path<String>,
     Json(req): Json<PairingCodeRequest>,
 ) -> AppResult<Json<PairingCodeResponse>> {
+    crate::security::validate_session_id(&id)?;
     let _ = repo::get_one(&id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", id)))?;

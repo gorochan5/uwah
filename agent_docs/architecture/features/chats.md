@@ -1,4 +1,6 @@
-# Conversas e mensagens
+# Conversas e mensagens — estado atual
+
+> Os handlers atuais estão em `src/api/http/chats.rs` e `src/api/http/messages.rs`. Use `docs/API.md` como contrato; notas sobre handlers vazios são históricas.
 
 ## Objetivo
 
@@ -14,7 +16,7 @@ Documentar chats e mensagens modelados no repositório.
 
 ## Operações e eventos
 
-Os repositórios esboçam leitura/criação/exclusão, mas as criações não preenchem campos obrigatórios e não há envio, recebimento, histórico conectado a WhatsApp, eventos ou status de entrega implementados. Os handlers HTTP/gRPC estão vazios.
+Os repositórios e handlers atuais cobrem leitura, criação, exclusão, envio, recebimento, histórico, eventos e status de entrega em diferentes fluxos. Para o contrato de integração, consulte `docs/API.md`; para detalhes de implementação, consulte `src/api/http/chats.rs`, `src/api/http/messages.rs` e `src/events/handlers/messages.rs`.
 
 ## Estado
 

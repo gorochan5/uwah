@@ -108,7 +108,8 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
             .await;
         }
 
-        // 4. Ingest conversation messages
+        // 4. Ingest conversation messages in batch
+        let mut conv_messages: Vec<Message> = Vec::new();
         for hist_msg in &conv.messages {
             let Some(web_msg) = hist_msg.message.as_option() else {
                 continue;
@@ -148,7 +149,7 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
                 "received".to_string()
             };
 
-            let db_message = Message {
+            conv_messages.push(Message {
                 id: msg_id.to_string(),
                 session_id: session_id.to_string(),
                 chat_jid: chat_jid.to_string(),
@@ -165,17 +166,21 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
                 is_edited: extracted.is_edited,
                 is_deleted: extracted.is_revoked,
                 timestamp: dt,
-            };
+            });
+        }
 
-            if let Err(err) = crate::repository::messages::create(&db_message).await {
+        if !conv_messages.is_empty() {
+            let msg_count = conv_messages.len();
+            if let Err(err) = crate::repository::messages::create_batch(&conv_messages).await {
                 error!(
                     session_id = %session_id,
-                    message_id = %msg_id,
+                    chat_jid = %chat_jid,
+                    count = msg_count,
                     error = %err,
-                    "Failed to insert historical message in DB"
+                    "Failed to insert batch of historical messages in DB"
                 );
             } else {
-                total_messages += 1;
+                total_messages += msg_count;
             }
         }
 

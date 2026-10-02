@@ -1,23 +1,5 @@
-# API HTTP/REST
+# API HTTP/REST — estado atual
 
-## Objetivo
+Este documento aponta para a referência operacional em [docs/API.md](../../../docs/API.md). O router real está em `src/api/http/mod.rs` e cobre health, sessões, chats, mensagens, contatos, grupos, chamadas, mídia, SSE, WebSocket e DLQ.
 
-Documentar a superfície HTTP suportada pelo código real.
-
-## Estado atual
-
-Não há rotas implementadas. `src/api/http/*.rs` e `src/routes/*.rs` estão vazios; `src/api/mod.rs` apenas declara módulos privados e `src/routes/mod.rs` não contém router. Axum está declarado em `Cargo.toml`, e `src/main.rs` contém apenas uma tentativa incompleta de `axum::serve`.
-
-As tabelas de endpoints do README são intenção de produto, não contrato executável. Assim, não há parâmetros, JSON, códigos HTTP, middleware, health check ou tratamento de erros que possam ser confirmados.
-
-## Rotas planejadas no README
-
-O README menciona `/health`, operações de `/sessions`, leitura de chats, mensagens, contatos, participantes de grupos, histórico de chamadas e mídia. Os métodos marcados com 🚧 são explicitamente planejados. Nenhum deles possui handler no repositório.
-
-## Segurança
-
-Embora o README exija `Authorization: Bearer`, `src/security/mod.rs` está vazio e não há middleware. Consulte [../../security/security.md](../../security/security.md).
-
-## Pendências
-
-Implementar router, estado compartilhado, validação de path/body, mapeamento de erros para HTTP, autenticação e contratos JSON. Não usar esta página como especificação de integração até esses itens existirem.
+Rotas protegidas exigem `Authorization: Bearer <token>`. Swagger possui autenticação própria para navegador e o portal de scan valida query tokens. O contrato detalhado de métodos, rotas e limitações fica em `docs/API.md`.

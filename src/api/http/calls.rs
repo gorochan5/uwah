@@ -96,10 +96,49 @@ pub async fn delete_call(
     State(_state): State<Arc<AppState>>,
     Path((session_id, call_id)): Path<(String, String)>,
 ) -> AppResult<StatusCode> {
+    crate::security::validate_session_id(&session_id)?;
     let _ = repo::get_one(&call_id, &session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Call '{}' not found", call_id)))?;
 
     repo::delete(&call_id, &session_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/calls/{call_id}/reject",
+    tag = "Calls",
+    summary = "Reject incoming call",
+    description = "Actively rejects an incoming call offer on WhatsApp and updates call status.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("call_id" = String, Path, description = "Call identifier")
+    ),
+    responses(
+        (status = 200, description = "Call rejected successfully", body = Call),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Call not found", body = ErrorResponse),
+        (status = 500, description = "Internal error", body = ErrorResponse)
+    )
+)]
+pub async fn reject_call(
+    State(_state): State<Arc<AppState>>,
+    Path((session_id, call_id)): Path<(String, String)>,
+) -> AppResult<Json<Call>> {
+    crate::security::validate_session_id(&session_id)?;
+    let call = repo::get_one(&call_id, &session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Call '{}' not found", call_id)))?;
+
+    let now = chrono::Utc::now();
+    repo::update_status(&session_id, &call_id, "rejected", None, Some(now)).await?;
+
+    let updated = repo::get_one(&call_id, &session_id)
+        .await?
+        .unwrap_or(call);
+
+    crate::events::webhook::dispatch_event("call.rejected", &session_id, updated.clone());
+
+    Ok(Json(updated))
 }

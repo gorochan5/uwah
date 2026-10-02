@@ -5,15 +5,18 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
-axum = "0.8.9"
+axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.22"
 chrono = { version = "0.4.45", features = ["serde"] }
+futures-util = "0.3"
 hex = "0.4"
 hmac = "0.13"
 maud = { version = "0.27.0", features = ["axum"] }
 nu-ansi-term = "0.50.3"
 prost = "0.14.4"
+prost-types = "0.14.4"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0"
@@ -21,16 +24,20 @@ sha2 = "0.11.0"
 sqlx = { version = "0.9.0", features = ["sqlite", "runtime-tokio", "chrono", "migrate"] }
 subtle = "2.6"
 tokio = { version = "1.53.1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 toml = "1.1.5"
 tonic = "0.14.6"
+tonic-prost = "0.14"
+tonic-reflection = "0.14"
 tower = { version = "0.5.3", features = ["full"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter", "local-time", "fmt"] }
 utoipa = { version = "5.5.0", features = ["chrono"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
+uuid = { version = "1.16", features = ["v4", "v7", "serde"] }
 whatsapp-rust = "0.7.0"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-prost-build = "0.14"

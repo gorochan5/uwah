@@ -261,6 +261,11 @@ pub async fn send_message(
         wa::Message::text(&body_str)
     };
 
+    state
+        .traffic
+        .apply_typing_jitter(&session_id, &parsed_jid, &client, body_str.len(), false)
+        .await;
+
     let send_res = client
         .send_message(parsed_jid.clone(), wa_message)
         .await
@@ -297,6 +302,7 @@ pub async fn send_message(
     };
 
     repo::create(&message).await?;
+    crate::api::http::metrics::inc_messages_outbound();
 
     let saved = repo::get_one(&send_res.message_id, &session_id)
         .await?
@@ -525,6 +531,17 @@ pub async fn send_media(
         _ => unreachable!(),
     };
 
+    state
+        .traffic
+        .apply_typing_jitter(
+            &session_id,
+            &parsed_jid,
+            &client,
+            req.caption.as_deref().unwrap_or("").len(),
+            req.media_type == "audio",
+        )
+        .await;
+
     let send_res = client
         .send_message(parsed_jid.clone(), wa_message)
         .await
@@ -564,6 +581,7 @@ pub async fn send_media(
     };
 
     repo::create(&message).await?;
+    crate::api::http::metrics::inc_messages_outbound();
 
     let saved = repo::get_one(&send_res.message_id, &session_id)
         .await?
@@ -826,3 +844,277 @@ pub async fn delete_message(
     repo::delete(&msg_id, &session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SendLocationRequest {
+    /// Latitude in degrees (-90.0 to 90.0)
+    #[schema(example = -23.55052)]
+    pub latitude: f64,
+    /// Longitude in degrees (-180.0 to 180.0)
+    #[schema(example = -46.633308)]
+    pub longitude: f64,
+    /// Optional name of the location / point of interest
+    #[schema(example = "São Paulo Cathedral")]
+    pub name: Option<String>,
+    /// Optional physical street address
+    #[schema(example = "Praça da Sé - Sé, São Paulo - SP, Brazil")]
+    pub address: Option<String>,
+    /// Optional URL link for the location
+    pub url: Option<String>,
+    /// Optional quoted message ID for replies
+    pub quoted_message_id: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/chats/{jid}/messages/location",
+    tag = "Messages",
+    summary = "Send location message",
+    description = "Transmits a geographic coordinate location message to the specified WhatsApp recipient.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Recipient WhatsApp JID")
+    ),
+    request_body = SendLocationRequest,
+    responses(
+        (status = 201, description = "Location message sent and stored", body = Message),
+        (status = 400, description = "Invalid payload or inactive WhatsApp bot", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Protocol or storage failure", body = ErrorResponse)
+    )
+)]
+pub async fn send_location(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Json(req): Json<SendLocationRequest>,
+) -> AppResult<(StatusCode, Json<Message>)> {
+    let session = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let parsed_jid = parse_recipient_jid(&jid)?;
+    let clean_quoted_id = req
+        .quoted_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let context_info = if let Some(quoted_id) = clean_quoted_id {
+        Some(build_quote_context(&session_id, &client, &session, &parsed_jid, quoted_id).await)
+    } else {
+        None
+    };
+
+    let loc_msg = wa::message::LocationMessage {
+        degrees_latitude: Some(req.latitude),
+        degrees_longitude: Some(req.longitude),
+        name: req.name.clone(),
+        address: req.address.clone(),
+        url: req.url.clone(),
+        context_info: context_info.map(MessageField::some).unwrap_or_default(),
+        ..Default::default()
+    };
+
+    let wa_message = wa::Message {
+        location_message: MessageField::some(loc_msg),
+        ..Default::default()
+    };
+
+    state
+        .traffic
+        .apply_typing_jitter(&session_id, &parsed_jid, &client, 20, false)
+        .await;
+
+    let send_res = client
+        .send_message(parsed_jid.clone(), wa_message)
+        .await
+        .map_err(|err| {
+            AppError::Internal(anyhow::anyhow!("Failed to send WhatsApp location message: {}", err))
+        })?;
+
+    let sender_jid = session
+        .phone_number
+        .map(|p| format!("{}@s.whatsapp.net", p))
+        .unwrap_or_else(|| "me@s.whatsapp.net".to_string());
+
+    let chat_jid_str = parsed_jid.to_string();
+    let _ = crate::repository::chats::ensure_exists(&chat_jid_str, &session_id).await;
+    auto_register_contact_if_needed(&session_id, &parsed_jid, &chat_jid_str).await;
+
+    let body_repr = req.address.or(req.name).unwrap_or_else(|| {
+        format!("Location: ({:.6}, {:.6})", req.latitude, req.longitude)
+    });
+
+    let message = Message {
+        id: send_res.message_id.clone(),
+        session_id: session_id.clone(),
+        chat_jid: chat_jid_str,
+        sender_jid,
+        quoted_message_id: clean_quoted_id.map(ToString::to_string),
+        is_from_me: true,
+        message_type: "location".to_string(),
+        body: Some(body_repr),
+        cdn_url: None,
+        media_key: None,
+        file_enc_sha256: None,
+        media_sha256: None,
+        delivery_status: "sent".to_string(),
+        is_edited: false,
+        is_deleted: false,
+        timestamp: chrono::Utc::now(),
+    };
+
+    repo::create(&message).await?;
+    crate::api::http::metrics::inc_messages_outbound();
+
+    let saved = repo::get_one(&send_res.message_id, &session_id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to retrieve created message")))?;
+
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SendContactRequest {
+    /// Full contact name (e.g. "Jane Doe")
+    #[schema(example = "Jane Doe")]
+    pub display_name: String,
+    /// Standard vCard formatted contact string (vCard 3.0)
+    #[schema(example = "BEGIN:VCARD\nVERSION:3.0\nN:Doe;Jane;;;\nFN:Jane Doe\nTEL;TYPE=CELL:+1234567890\nEND:VCARD")]
+    pub vcard: String,
+    /// Optional quoted message ID for replies
+    pub quoted_message_id: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/chats/{jid}/messages/contact",
+    tag = "Messages",
+    summary = "Send contact card",
+    description = "Transmits a vCard contact business card to the specified WhatsApp recipient.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Recipient WhatsApp JID")
+    ),
+    request_body = SendContactRequest,
+    responses(
+        (status = 201, description = "Contact card sent and stored", body = Message),
+        (status = 400, description = "Invalid payload or inactive WhatsApp bot", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Protocol or storage failure", body = ErrorResponse)
+    )
+)]
+pub async fn send_contact(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Json(req): Json<SendContactRequest>,
+) -> AppResult<(StatusCode, Json<Message>)> {
+    let session = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    if req.display_name.trim().is_empty() || req.vcard.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "Both display_name and vcard are required and cannot be empty".to_string(),
+        ));
+    }
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let parsed_jid = parse_recipient_jid(&jid)?;
+    let clean_quoted_id = req
+        .quoted_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let context_info = if let Some(quoted_id) = clean_quoted_id {
+        Some(build_quote_context(&session_id, &client, &session, &parsed_jid, quoted_id).await)
+    } else {
+        None
+    };
+
+    let contact_msg = wa::message::ContactMessage {
+        display_name: Some(req.display_name.clone()),
+        vcard: Some(req.vcard.clone()),
+        context_info: context_info.map(MessageField::some).unwrap_or_default(),
+        ..Default::default()
+    };
+
+    let wa_message = wa::Message {
+        contact_message: MessageField::some(contact_msg),
+        ..Default::default()
+    };
+
+    state
+        .traffic
+        .apply_typing_jitter(&session_id, &parsed_jid, &client, req.display_name.len(), false)
+        .await;
+
+    let send_res = client
+        .send_message(parsed_jid.clone(), wa_message)
+        .await
+        .map_err(|err| {
+            AppError::Internal(anyhow::anyhow!("Failed to send WhatsApp contact message: {}", err))
+        })?;
+
+    let sender_jid = session
+        .phone_number
+        .map(|p| format!("{}@s.whatsapp.net", p))
+        .unwrap_or_else(|| "me@s.whatsapp.net".to_string());
+
+    let chat_jid_str = parsed_jid.to_string();
+    let _ = crate::repository::chats::ensure_exists(&chat_jid_str, &session_id).await;
+    auto_register_contact_if_needed(&session_id, &parsed_jid, &chat_jid_str).await;
+
+    let message = Message {
+        id: send_res.message_id.clone(),
+        session_id: session_id.clone(),
+        chat_jid: chat_jid_str,
+        sender_jid,
+        quoted_message_id: clean_quoted_id.map(ToString::to_string),
+        is_from_me: true,
+        message_type: "contact".to_string(),
+        body: Some(req.display_name),
+        cdn_url: None,
+        media_key: None,
+        file_enc_sha256: None,
+        media_sha256: None,
+        delivery_status: "sent".to_string(),
+        is_edited: false,
+        is_deleted: false,
+        timestamp: chrono::Utc::now(),
+    };
+
+    repo::create(&message).await?;
+    crate::api::http::metrics::inc_messages_outbound();
+
+    let saved = repo::get_one(&send_res.message_id, &session_id)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("Failed to retrieve created message")))?;
+
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+

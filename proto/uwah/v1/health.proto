@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service HealthService {
+  rpc Check (HealthCheckRequest) returns (HealthCheckResponse);
+  rpc Watch (HealthCheckRequest) returns (stream HealthCheckResponse);
+  rpc CheckLiveness (LivenessRequest) returns (LivenessResponse);
+  rpc CheckReadiness (ReadinessRequest) returns (ReadinessResponse);
+  rpc CheckStartup (StartupRequest) returns (StartupResponse);
+  rpc ExportMetrics (ExportMetricsRequest) returns (ExportMetricsResponse);
+}
+
+message HealthCheckRequest {
+  string service = 1;
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+  string message = 2;
+}
+
+message LivenessRequest {}
+
+message LivenessResponse {
+  string status = 1;
+  int64 timestamp = 2;
+}
+
+message ReadinessRequest {}
+
+message ReadinessResponse {
+  string status = 1;
+  bool database = 2;
+  int32 active_sessions = 3;
+  int64 timestamp = 4;
+}
+
+message StartupRequest {}
+
+message StartupResponse {
+  string status = 1;
+  bool database_initialized = 2;
+  int64 timestamp = 3;
+}
+
+message ExportMetricsRequest {}
+
+message ExportMetricsResponse {
+  string metrics = 1;
+}

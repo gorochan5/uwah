@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service ChatService {
+  rpc SetGlobalPresence (SetGlobalPresenceRequest) returns (GlobalPresenceResponse);
+  rpc SetChatPresence (SetChatPresenceRequest) returns (ChatActionResponse);
+  rpc ListChats (ListChatsRequest) returns (ListChatsResponse);
+  rpc GetChat (GetChatRequest) returns (ChatItem);
+  rpc DeleteChat (DeleteChatRequest) returns (ChatActionResponse);
+  rpc MarkAsRead (MarkAsReadRequest) returns (ChatActionResponse);
+  rpc MuteChat (MuteChatRequest) returns (ChatActionResponse);
+  rpc PinChat (PinChatRequest) returns (ChatActionResponse);
+  rpc ArchiveChat (ArchiveChatRequest) returns (ChatActionResponse);
+  rpc SetSubject (SetSubjectRequest) returns (ChatActionResponse);
+  rpc SetDescription (SetDescriptionRequest) returns (ChatActionResponse);
+  rpc SetEphemeralTimer (SetEphemeralTimerRequest) returns (ChatActionResponse);
+  rpc SetGroupAnnouncement (SetGroupAnnouncementRequest) returns (ChatActionResponse);
+  rpc SetGroupLock (SetGroupLockRequest) returns (ChatActionResponse);
+  rpc GetInviteLink (GetInviteLinkRequest) returns (GetInviteLinkResponse);
+  rpc LeaveGroup (LeaveGroupRequest) returns (ChatActionResponse);
+}
+
+message ChatItem {
+  string session_id = 1;
+  string jid = 2;
+  optional string name = 3;
+  int32 unread_count = 4;
+  int64 last_message_timestamp = 5;
+  bool is_archived = 6;
+  bool is_pinned = 7;
+  int64 muted_until = 8;
+  int64 ephemeral_expiration = 9;
+  int64 created_at = 10;
+  int64 updated_at = 11;
+}
+
+message SetGlobalPresenceRequest {
+  string session_id = 1;
+  string presence = 2; // "available" or "unavailable"
+}
+
+message GlobalPresenceResponse {
+  string session_id = 1;
+  string presence = 2;
+  string status = 3;
+}
+
+message SetChatPresenceRequest {
+  string session_id = 1;
+  string jid = 2;
+  string state = 3; // "composing", "recording", "paused"
+  optional string media = 4; // "audio"
+}
+
+message ListChatsRequest {
+  string session_id = 1;
+  optional int64 limit = 2;
+  optional int64 offset = 3;
+}
+
+message ListChatsResponse {
+  repeated ChatItem chats = 1;
+}
+
+message GetChatRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message DeleteChatRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message MarkAsReadRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message MuteChatRequest {
+  string session_id = 1;
+  string jid = 2;
+  int64 mute_duration_seconds = 3; // 0 for unmute, -1 or >0 for duration
+}
+
+message PinChatRequest {
+  string session_id = 1;
+  string jid = 2;
+  bool pinned = 3;
+}
+
+message ArchiveChatRequest {
+  string session_id = 1;
+  string jid = 2;
+  bool archived = 3;
+}
+
+message SetSubjectRequest {
+  string session_id = 1;
+  string jid = 2;
+  string subject = 3;
+}
+
+message SetDescriptionRequest {
+  string session_id = 1;
+  string jid = 2;
+  string description = 3;
+}
+
+message SetEphemeralTimerRequest {
+  string session_id = 1;
+  string jid = 2;
+  int64 ephemeral_timer_seconds = 3; // 0, 86400, 604800, 7776000
+}
+
+message SetGroupAnnouncementRequest {
+  string session_id = 1;
+  string jid = 2;
+  bool announcement_only = 3;
+}
+
+message SetGroupLockRequest {
+  string session_id = 1;
+  string jid = 2;
+  bool locked = 3;
+}
+
+message GetInviteLinkRequest {
+  string session_id = 1;
+  string jid = 2;
+  bool reset = 3;
+}
+
+message GetInviteLinkResponse {
+  string session_id = 1;
+  string group_jid = 2;
+  string invite_code = 3;
+  string invite_link = 4;
+}
+
+message LeaveGroupRequest {
+  string session_id = 1;
+  string jid = 2;
+}
+
+message ChatActionResponse {
+  string session_id = 1;
+  string jid = 2;
+  string action = 3;
+  string status = 4;
+}

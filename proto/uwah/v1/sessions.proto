@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package uwah.v1;
+
+service SessionService {
+  rpc ListSessions (ListSessionsRequest) returns (ListSessionsResponse);
+  rpc CreateSession (CreateSessionRequest) returns (SessionItem);
+  rpc GetSession (GetSessionRequest) returns (SessionItem);
+  rpc DeleteSession (DeleteSessionRequest) returns (DeleteSessionResponse);
+  rpc RefreshQr (RefreshQrRequest) returns (SessionActionResponse);
+  rpc RestartSession (RestartSessionRequest) returns (SessionActionResponse);
+  rpc LogoutSession (LogoutSessionRequest) returns (SessionActionResponse);
+  rpc RequestPairingCode (PairingCodeRequest) returns (PairingCodeResponse);
+}
+
+message SessionItem {
+  string id = 1;
+  string status = 2;
+  optional string phone_number = 3;
+  optional string push_name = 4;
+  optional string qr_payload = 5;
+  int64 created_at = 6;
+  int64 updated_at = 7;
+}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  repeated SessionItem sessions = 1;
+}
+
+message CreateSessionRequest {
+  string id = 1;
+}
+
+message GetSessionRequest {
+  string id = 1;
+}
+
+message DeleteSessionRequest {
+  string id = 1;
+}
+
+message DeleteSessionResponse {
+  bool success = 1;
+}
+
+message RefreshQrRequest {
+  string id = 1;
+  string qr_payload = 2;
+}
+
+message RestartSessionRequest {
+  string id = 1;
+}
+
+message LogoutSessionRequest {
+  string id = 1;
+}
+
+message PairingCodeRequest {
+  string id = 1;
+  string phone_number = 2;
+}
+
+message PairingCodeResponse {
+  string session_id = 1;
+  string pairing_code = 2;
+  string status = 3;
+}
+
+message SessionActionResponse {
+  string session_id = 1;
+  string status = 2;
+  string message = 3;
+}

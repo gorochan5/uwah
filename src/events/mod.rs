@@ -1,10 +1,11 @@
+pub mod bus;
 pub mod extractor;
 pub mod handlers;
+pub mod outbox_worker;
 pub mod webhook;
 
-use std::collections::HashMap;
+use crate::api::session_manager::SessionManager;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::types::events::Event;
 
@@ -13,7 +14,7 @@ pub async fn dispatch(
     session_id: String,
     event: Arc<Event>,
     client: Arc<Client>,
-    clients: Arc<RwLock<HashMap<String, Arc<Client>>>>,
+    session_mgr: SessionManager,
 ) {
     let result = match &*event {
         Event::Messages(batch) => handlers::messages::handle(&session_id, batch).await,
@@ -30,8 +31,19 @@ pub async fn dispatch(
             handlers::contacts::handle_changed(&session_id, update).await
         }
         Event::Connected(_) => handlers::lifecycle::handle_connected(&session_id, &client).await,
-        Event::LoggedOut(_) => handlers::lifecycle::handle_logged_out(&session_id, clients).await,
+        Event::LoggedOut(_) => handlers::lifecycle::handle_logged_out(&session_id, &session_mgr).await,
         Event::PairingQrCode(qr) => handlers::lifecycle::handle_qr(&session_id, &qr.code).await,
+        Event::PairingQrCodesExhausted(_) => {
+            handlers::lifecycle::handle_qr_exhausted(&session_id).await
+        }
+        Event::Disconnected(_) => handlers::lifecycle::handle_disconnected(&session_id).await,
+        Event::StreamReplaced(_) => {
+            handlers::lifecycle::handle_stream_replaced(&session_id, &session_mgr).await
+        }
+        Event::StreamError(err) => {
+            let code = err.code.parse::<u16>().ok();
+            handlers::lifecycle::handle_stream_error(&session_id, code, &session_mgr).await
+        }
         _ => Ok(()),
     };
 

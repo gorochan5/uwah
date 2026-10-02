@@ -41,8 +41,20 @@ pub async fn handle(session_id: &str, update: &GroupUpdate) -> Result<()> {
                 subject_time.map(|t| t as i64),
             )
             .await;
+
+            crate::events::webhook::dispatch_event(
+                "group.subject_updated",
+                session_id,
+                serde_json::json!({
+                    "group_jid": group_jid,
+                    "subject": subject,
+                    "owner_jid": owner_str,
+                    "timestamp": subject_time,
+                }),
+            );
         }
         GroupNotificationAction::Add { participants, .. } => {
+            let mut added_jids = Vec::new();
             for p in participants {
                 let participant_jid = p.jid.to_string();
                 info!(
@@ -54,14 +66,26 @@ pub async fn handle(session_id: &str, update: &GroupUpdate) -> Result<()> {
                 let participant = GroupParticipant {
                     session_id: session_id.to_string(),
                     group_jid: group_jid.clone(),
-                    user_jid: participant_jid,
+                    user_jid: participant_jid.clone(),
                     role: "member".to_string(),
                     joined_at: update.timestamp,
                 };
                 let _ = crate::repository::group_participants::upsert(&participant).await;
+                added_jids.push(participant_jid);
             }
+
+            crate::events::webhook::dispatch_event(
+                "group.participant_added",
+                session_id,
+                serde_json::json!({
+                    "group_jid": group_jid,
+                    "participants": added_jids,
+                    "timestamp": update.timestamp,
+                }),
+            );
         }
         GroupNotificationAction::Remove { participants, .. } => {
+            let mut removed_jids = Vec::new();
             for p in participants {
                 let participant_jid = p.jid.to_string();
                 info!(
@@ -76,9 +100,21 @@ pub async fn handle(session_id: &str, update: &GroupUpdate) -> Result<()> {
                     &participant_jid,
                 )
                 .await;
+                removed_jids.push(participant_jid);
             }
+
+            crate::events::webhook::dispatch_event(
+                "group.participant_removed",
+                session_id,
+                serde_json::json!({
+                    "group_jid": group_jid,
+                    "participants": removed_jids,
+                    "timestamp": update.timestamp,
+                }),
+            );
         }
         GroupNotificationAction::Promote { participants } => {
+            let mut promoted_jids = Vec::new();
             for p in participants {
                 let participant_jid = p.jid.to_string();
                 info!(
@@ -94,9 +130,21 @@ pub async fn handle(session_id: &str, update: &GroupUpdate) -> Result<()> {
                     "admin",
                 )
                 .await;
+                promoted_jids.push(participant_jid);
             }
+
+            crate::events::webhook::dispatch_event(
+                "group.participant_promoted",
+                session_id,
+                serde_json::json!({
+                    "group_jid": group_jid,
+                    "participants": promoted_jids,
+                    "timestamp": update.timestamp,
+                }),
+            );
         }
         GroupNotificationAction::Demote { participants } => {
+            let mut demoted_jids = Vec::new();
             for p in participants {
                 let participant_jid = p.jid.to_string();
                 info!(
@@ -112,7 +160,18 @@ pub async fn handle(session_id: &str, update: &GroupUpdate) -> Result<()> {
                     "member",
                 )
                 .await;
+                demoted_jids.push(participant_jid);
             }
+
+            crate::events::webhook::dispatch_event(
+                "group.participant_demoted",
+                session_id,
+                serde_json::json!({
+                    "group_jid": group_jid,
+                    "participants": demoted_jids,
+                    "timestamp": update.timestamp,
+                }),
+            );
         }
         _ => {}
     }

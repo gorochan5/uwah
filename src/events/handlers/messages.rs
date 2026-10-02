@@ -1,11 +1,28 @@
 use crate::events::extractor;
 use crate::models::messages::Message;
 use anyhow::Result;
-use tracing::{error, info};
+use tracing::info;
 use whatsapp_rust::types::events::MessageBatch;
 use whatsapp_rust::types::message::EditAttribute;
 
 pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
+    let pool = crate::database::get();
+    let mut tx = pool.begin().await?;
+
+    // 1. Defensively guarantee root session row exists
+    sqlx::query!(
+        r#"
+        INSERT INTO sessions (id, status, created_at, updated_at)
+        VALUES ($1, 'QRCODE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO NOTHING
+        "#,
+        session_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    let mut pending_webhooks: Vec<(String, String, serde_json::Value)> = Vec::new();
+
     for inbound in batch.iter() {
         let info = &inbound.info;
         let msg_id = info.id.to_string();
@@ -19,62 +36,92 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
             message_id = %msg_id,
             chat = %chat_jid,
             sender = %sender_jid,
-            "Processing inbound WhatsApp message"
+            "Processing inbound WhatsApp message (atomic transaction)"
         );
 
-        // 1. Ensure chat exists in DB so foreign key constraint never fails
-        if let Err(err) = crate::repository::chats::ensure_exists(&chat_jid, session_id).await {
-            error!(
-                session_id = %session_id,
-                chat = %chat_jid,
-                error = %err,
-                "Failed to ensure chat exists in DB"
-            );
-            continue;
-        }
+        crate::api::http::metrics::inc_messages_inbound();
 
-        // 2. Extract message body, media metadata, quoted context, and protocol actions
+        // 2. Ensure chat exists in DB within transaction
+        let kind = if chat_jid.ends_with("@g.us") {
+            "group"
+        } else if chat_jid.ends_with("@newsletter") {
+            "newsletter"
+        } else if chat_jid.ends_with("@broadcast") {
+            "broadcast"
+        } else {
+            "direct"
+        };
+
+        sqlx::query!(
+            r#"
+            INSERT INTO chats (jid, session_id, kind)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(session_id, jid) DO UPDATE SET
+                kind = CASE WHEN chats.kind = 'direct' AND excluded.kind != 'direct' THEN excluded.kind ELSE chats.kind END
+            "#,
+            chat_jid,
+            session_id,
+            kind
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 3. Extract message content with recursive wrapper unwrapping
         let extracted = extractor::extract_message_content(&inbound.message);
 
-        // 3. Handle edit and revoke protocol actions
-        if let (true, Some(target_id)) = (extracted.is_revoked, &extracted.edit_target_id) {
-            let _ = crate::repository::messages::mark_as_deleted(session_id, target_id).await;
-            crate::events::webhook::dispatch_event(
-                "message.revoked",
-                session_id,
-                serde_json::json!({
-                    "message_id": target_id,
-                    "revoked_by": sender_jid,
-                    "chat_jid": chat_jid,
-                }),
-            );
-        }
-        if let (true, Some(target_id)) = (extracted.is_edited, &extracted.edit_target_id) {
-            let _ = crate::repository::messages::update_edited_message(
-                session_id,
-                target_id,
-                extracted.body.as_deref(),
-            )
-            .await;
-            crate::events::webhook::dispatch_event(
-                "message.edited",
-                session_id,
-                serde_json::json!({
-                    "message_id": target_id,
-                    "edited_body": extracted.body,
-                    "chat_jid": chat_jid,
-                }),
-            );
-        }
-
         // Check stanza edit attributes
-        let (is_edited, is_deleted) = match info.edit {
+        let (is_edited, is_revoked) = match info.edit {
             EditAttribute::MessageEdit | EditAttribute::AdminEdit => (true, false),
             EditAttribute::SenderRevoke | EditAttribute::AdminRevoke => (false, true),
             _ => (extracted.is_edited, extracted.is_revoked),
         };
 
-        // 4. Map media fields
+        // 4. Handle edit and revoke protocol actions
+        if is_revoked
+            && let Some(target_id) = &extracted.edit_target_id {
+            sqlx::query!(
+                "UPDATE messages SET is_deleted = 1 WHERE id = $1 AND session_id = $2",
+                target_id,
+                session_id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            pending_webhooks.push((
+                "message.revoked".to_string(),
+                session_id.to_string(),
+                serde_json::json!({
+                    "message_id": target_id,
+                    "revoked_by": sender_jid,
+                    "chat_jid": chat_jid,
+                }),
+            ));
+        }
+
+        if is_edited
+            && let Some(target_id) = &extracted.edit_target_id {
+            let edit_body = extracted.body.as_deref();
+            sqlx::query!(
+                "UPDATE messages SET body = $1, is_edited = 1 WHERE id = $2 AND session_id = $3",
+                edit_body,
+                target_id,
+                session_id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            pending_webhooks.push((
+                "message.edited".to_string(),
+                session_id.to_string(),
+                serde_json::json!({
+                    "message_id": target_id,
+                    "edited_body": extracted.body,
+                    "chat_jid": chat_jid,
+                }),
+            ));
+        }
+
+        // 5. Map media fields
         let (cdn_url, media_key, file_enc_sha256, media_sha256) = match extracted.media {
             Some(m) => (m.cdn_url, m.media_key, m.file_enc_sha256, m.media_sha256),
             None => (None, None, None, None),
@@ -101,37 +148,78 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
             media_sha256,
             delivery_status,
             is_edited,
-            is_deleted,
+            is_deleted: is_revoked,
             timestamp,
         };
 
-        if let Err(err) = crate::repository::messages::create(&db_message).await {
-            error!(
-                session_id = %session_id,
-                message_id = %msg_id,
-                error = %err,
-                "Failed to store message in uwah.db"
-            );
-        } else {
-            crate::events::webhook::dispatch_event(
-                "message.received",
-                session_id,
-                db_message.clone(),
-            );
-        }
-
-        // 5. Advance chat's last_message_at and unread_count
-        let _ = crate::repository::chats::update_last_message(
-            &chat_jid,
-            session_id,
-            timestamp.timestamp_millis(),
-            !is_from_me,
+        // 6. Insert/Upsert message
+        sqlx::query!(
+            r#"
+            INSERT INTO messages (
+                id, session_id, chat_jid, sender_jid, quoted_message_id,
+                is_from_me, message_type, body, cdn_url, media_key,
+                file_enc_sha256, media_sha256, delivery_status, is_edited,
+                is_deleted, timestamp
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ON CONFLICT(id, session_id) DO UPDATE SET
+                delivery_status = CASE
+                    WHEN messages.delivery_status = 'read' THEN 'read'
+                    WHEN messages.delivery_status = 'delivered' AND excluded.delivery_status IN ('pending', 'sent', 'received') THEN messages.delivery_status
+                    ELSE excluded.delivery_status
+                END,
+                body = CASE
+                    WHEN excluded.is_edited = 1 THEN excluded.body
+                    WHEN messages.is_edited = 1 THEN messages.body
+                    ELSE COALESCE(excluded.body, messages.body)
+                END,
+                is_edited = messages.is_edited OR excluded.is_edited,
+                is_deleted = messages.is_deleted OR excluded.is_deleted,
+                cdn_url = COALESCE(excluded.cdn_url, messages.cdn_url),
+                media_key = COALESCE(excluded.media_key, messages.media_key),
+                file_enc_sha256 = COALESCE(excluded.file_enc_sha256, messages.file_enc_sha256),
+                media_sha256 = COALESCE(excluded.media_sha256, messages.media_sha256)
+            "#,
+            db_message.id,
+            db_message.session_id,
+            db_message.chat_jid,
+            db_message.sender_jid,
+            db_message.quoted_message_id,
+            db_message.is_from_me,
+            db_message.message_type,
+            db_message.body,
+            db_message.cdn_url,
+            db_message.media_key,
+            db_message.file_enc_sha256,
+            db_message.media_sha256,
+            db_message.delivery_status,
+            db_message.is_edited,
+            db_message.is_deleted,
+            db_message.timestamp
         )
-        .await;
+        .execute(&mut *tx)
+        .await?;
 
-        // 6. Auto-register contact on message per specification:
-        // - In group chats: individual participant if not from me
-        // - In 1:1 chats: peer (chat if sent from me, sender if received from peer)
+        // 7. Update chat last_message_at and unread_count
+        let unread_delta: i64 = if !is_from_me { 1 } else { 0 };
+        let ts_millis = timestamp.timestamp_millis();
+        sqlx::query!(
+            r#"
+            UPDATE chats
+            SET last_message_at = MAX(COALESCE(last_message_at, 0), $1),
+                unread_count = unread_count + $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE jid = $3 AND session_id = $4
+            "#,
+            ts_millis,
+            unread_delta,
+            chat_jid,
+            session_id
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // 8. Auto-register contact on message
         let contact_jid = if info.source.is_group {
             if is_from_me {
                 None
@@ -169,23 +257,49 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
                 (Some(target.user.as_str()), alt_jid_str.as_deref())
             };
 
-            if let Err(err) = crate::repository::contacts::ensure_exists(
+            sqlx::query!(
+                r#"
+                INSERT INTO contacts (
+                    session_id,
+                    jid,
+                    lid_jid,
+                    phone_number,
+                    push_name,
+                    updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+                ON CONFLICT(session_id, jid) DO UPDATE SET
+                    lid_jid = COALESCE(excluded.lid_jid, contacts.lid_jid),
+                    phone_number = COALESCE(excluded.phone_number, contacts.phone_number),
+                    push_name = COALESCE(excluded.push_name, contacts.push_name),
+                    updated_at = CURRENT_TIMESTAMP
+                "#,
                 session_id,
-                &target_str,
-                phone,
-                push_name,
+                target_str,
                 lid,
+                phone,
+                push_name
             )
-            .await
-            {
-                tracing::warn!(
-                    session_id = %session_id,
-                    jid = %target_str,
-                    error = %err,
-                    "Failed to auto-register contact on message (best-effort)"
-                );
-            }
+            .execute(&mut *tx)
+            .await?;
         }
+
+        if let Ok(val) = serde_json::to_value(&db_message) {
+            pending_webhooks.push(("message.received".to_string(), session_id.to_string(), val));
+        }
+    }
+
+    // 9. Enqueue outbox events atomically within the transaction (Track 3.1 & 4.1)
+    for (event, sid, payload) in &pending_webhooks {
+        let _ = crate::repository::outbox::enqueue_tx(&mut tx, sid, event, None, payload).await;
+    }
+
+    // Commit atomic transaction
+    tx.commit().await?;
+
+    // Dispatch in-process event bus and direct webhook notifications post-commit
+    for (event, sid, payload) in pending_webhooks {
+        crate::events::webhook::dispatch_event(&event, &sid, payload);
     }
 
     Ok(())

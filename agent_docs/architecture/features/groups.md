@@ -1,4 +1,6 @@
-# Grupos
+# Grupos — estado atual
+
+> Administração de grupos e participantes possui handlers em `src/api/http/chats.rs` e `src/api/http/group_participants.rs`. Consulte `docs/API.md`; notas abaixo podem ser históricas.
 
 ## Objetivo
 

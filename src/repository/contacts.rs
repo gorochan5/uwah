@@ -214,15 +214,15 @@ pub async fn upsert(contact: &Contact) -> Result<SqliteQueryResult> {
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
         ON CONFLICT(session_id, jid) DO UPDATE SET
-            lid_jid = excluded.lid_jid,
-            phone_number = excluded.phone_number,
-            push_name = excluded.push_name,
-            status_text = excluded.status_text,
-            profile_pic_url = excluded.profile_pic_url,
+            lid_jid = COALESCE(excluded.lid_jid, contacts.lid_jid),
+            phone_number = COALESCE(excluded.phone_number, contacts.phone_number),
+            push_name = COALESCE(excluded.push_name, contacts.push_name),
+            status_text = COALESCE(excluded.status_text, contacts.status_text),
+            profile_pic_url = COALESCE(excluded.profile_pic_url, contacts.profile_pic_url),
             is_business = excluded.is_business,
-            username = excluded.username,
-            devices = excluded.devices,
-            verified_name = excluded.verified_name,
+            username = COALESCE(excluded.username, contacts.username),
+            devices = COALESCE(excluded.devices, contacts.devices),
+            verified_name = COALESCE(excluded.verified_name, contacts.verified_name),
             updated_at = CURRENT_TIMESTAMP
         "#,
         contact.session_id,
@@ -240,6 +240,36 @@ pub async fn upsert(contact: &Contact) -> Result<SqliteQueryResult> {
     .execute(pool)
     .await
     .context("Failed to upsert contact on DB")
+}
+
+pub async fn get_by_jid_or_lid(session_id: &str, identifier: &str) -> Result<Option<Contact>> {
+    let pool = crate::database::get();
+    sqlx::query_as!(
+        Contact,
+        r#"
+        SELECT
+            session_id,
+            jid,
+            lid_jid,
+            phone_number,
+            push_name,
+            status_text,
+            profile_pic_url,
+            is_business,
+            username,
+            devices,
+            verified_name,
+            updated_at AS "updated_at: chrono::DateTime<chrono::Utc>"
+        FROM contacts
+        WHERE session_id = $1 AND (jid = $2 OR lid_jid = $2 OR phone_number = $2)
+        LIMIT 1
+        "#,
+        session_id,
+        identifier
+    )
+    .fetch_optional(pool)
+    .await
+    .context("Failed to fetch contact by JID/LID/Phone")
 }
 
 pub async fn upsert_batch(session_id: &str, contacts: &[Contact]) -> Result<usize> {
@@ -421,3 +451,28 @@ pub async fn ensure_exists(
     .await
     .context("Failed to ensure contact exists in DB")
 }
+
+pub async fn update_profile_pic_url(
+    session_id: &str,
+    jid: &str,
+    profile_pic_url: &str,
+) -> Result<()> {
+    let pool = crate::database::get();
+    sqlx::query!(
+        r#"
+        UPDATE contacts
+        SET profile_pic_url = $1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = $2 AND jid = $3
+        "#,
+        profile_pic_url,
+        session_id,
+        jid
+    )
+    .execute(pool)
+    .await
+    .context("Failed to update contact profile_pic_url in DB")?;
+
+    Ok(())
+}
+

@@ -6,9 +6,9 @@ Documentar o cache de mídia e separar schema de comportamento implementado.
 
 ## Estado atual
 
-Não há implementação de cache em memória ou em disco. `src/models/media_cache.rs`, `src/repository/media_cache.rs` e a tabela `media_cache` apenas descrevem metadados: SHA-256, caminho, MIME, tamanho, contagem de referências e timestamps.
+Há cache de mídia em disco, exposto por `GET /sessions/{id}/media/{sha256}` e `POST /sessions/{id}/media/upload`. `src/models/media_cache.rs`, `src/repository/media_cache.rs` e a tabela `media_cache` mantêm SHA-256, caminho, MIME, tamanho, contagem de referências e timestamps.
 
-O repositório oferece leituras por hash, criação e exclusão esboçadas. Não há escrita de arquivo na pasta configurada em `[media]`, expiração, invalidação, atualização de `last_accessed_at`, ajuste de `ref_count`, locks ou reconciliação com mensagens.
+O repositório oferece leituras, criação, atualização de acesso e exclusão/pruning de entradas não referenciadas; o handler de mídia grava e transmite arquivos. A configuração de TTL e tamanho máximo está em `[media]`. O readiness check ainda usa o caminho fixo `data/media_cache`, uma limitação conhecida.
 
 ## Consistência e pendências
 

@@ -173,6 +173,18 @@ pub async fn get_media(
         }
     });
 
+    let etag_val = format!("\"{}\"", sha256);
+    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok())
+        && (if_none_match.trim() == etag_val || if_none_match.trim() == "*") {
+        let response = Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(header::ETAG, etag_val)
+            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+            .body(Body::empty())
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to build 304 response: {}", e)))?;
+        return Ok(response.into_response());
+    }
+
     let mime = HeaderValue::from_str(&media.mime_type)
         .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
 
@@ -194,6 +206,8 @@ pub async fn get_media(
                     .header(header::ACCEPT_RANGES, "bytes")
                     .header(header::CONTENT_LENGTH, length.to_string())
                     .header(header::CONTENT_RANGE, content_range)
+                    .header(header::ETAG, etag_val)
+                    .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
                     .body(Body::from_stream(limited_stream))
                     .map_err(|e| {
                         AppError::Internal(anyhow::anyhow!("Failed to build response: {}", e))
@@ -207,6 +221,8 @@ pub async fn get_media(
                     .status(StatusCode::RANGE_NOT_SATISFIABLE)
                     .header(header::ACCEPT_RANGES, "bytes")
                     .header(header::CONTENT_RANGE, unsatisfiable_range)
+                    .header(header::ETAG, etag_val)
+                    .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
                     .body(Body::empty())
                     .map_err(|e| {
                         AppError::Internal(anyhow::anyhow!("Failed to build range error: {}", e))
@@ -224,6 +240,8 @@ pub async fn get_media(
         .header(header::CONTENT_TYPE, mime)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, total_size.to_string())
+        .header(header::ETAG, etag_val)
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
         .body(Body::from_stream(stream))
         .map_err(|e| {
             AppError::Internal(anyhow::anyhow!("Failed to build streaming response: {}", e))

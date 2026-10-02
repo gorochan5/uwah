@@ -1,27 +1,36 @@
 pub mod calls;
 pub mod chats;
 pub mod contacts;
+pub mod dlq;
 pub mod error;
+pub mod events_sse;
 pub mod group_participants;
 pub mod health;
 pub mod media;
 pub mod messages;
+pub mod metrics;
 pub mod openapi;
 pub mod scan;
 pub mod sessions;
 pub mod state;
+pub mod ws;
 
 use crate::api::http::{openapi::ApiDoc, state::AppState};
 use axum::{
     Router, middleware,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use std::sync::Arc;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
-    let public_routes = Router::new().route("/health", get(health::health_check));
+    let public_routes = Router::new()
+        .route("/health", get(health::health_check))
+        .route("/health/live", get(health::liveness_check))
+        .route("/health/ready", get(health::readiness_check))
+        .route("/health/startup", get(health::startup_check))
+        .route("/metrics", get(metrics::export_metrics));
 
     let view_routes = Router::new()
         .route("/sessions/{id}/scan", get(scan::scan_page))
@@ -37,6 +46,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     ));
 
     let protected_routes = Router::new()
+        // Real-Time Event Streams (SSE & WebSockets)
+        .route("/events", get(events_sse::sse_events_global))
+        .route("/sessions/{id}/events", get(events_sse::sse_events_session))
+        .route("/ws", get(ws::ws_global))
+        .route("/sessions/{id}/ws", get(ws::ws_session))
+        // Webhook DLQ (Dead-Letter Queue)
+        .route("/webhooks/dlq", get(dlq::list_dlq))
+        .route("/webhooks/dlq/{id}", get(dlq::get_dlq).delete(dlq::delete_dlq))
+        .route("/webhooks/dlq/{id}/replay", post(dlq::replay_dlq))
+        .route("/webhooks/dlq/replay-all", post(dlq::replay_all_dlq))
         // Sessions
         .route(
             "/sessions",
@@ -77,6 +96,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             patch(chats::set_description),
         )
         .route(
+            "/sessions/{id}/chats/{jid}/settings/ephemeral",
+            put(chats::set_ephemeral_timer),
+        )
+        .route(
+            "/sessions/{id}/chats/{jid}/settings/announcement",
+            put(chats::set_group_announcement),
+        )
+        .route(
+            "/sessions/{id}/chats/{jid}/settings/lock",
+            put(chats::set_group_lock),
+        )
+        .route(
             "/sessions/{id}/chats/{jid}/invite-code",
             get(chats::get_invite_link),
         )
@@ -87,10 +118,19 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         // Groups
         .route("/sessions/{id}/groups", post(chats::create_group))
+        .route("/sessions/{id}/groups/join", post(chats::join_group))
         // Messages
         .route(
             "/sessions/{id}/chats/{jid}/messages",
             get(messages::list_messages).post(messages::send_message),
+        )
+        .route(
+            "/sessions/{id}/chats/{jid}/messages/location",
+            post(messages::send_location),
+        )
+        .route(
+            "/sessions/{id}/chats/{jid}/messages/contact",
+            post(messages::send_contact),
         )
         .route(
             "/sessions/{id}/chats/{jid}/messages/media",
@@ -159,6 +199,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/sessions/{id}/calls/{call_id}",
             get(calls::get_call).delete(calls::delete_call),
+        )
+        .route(
+            "/sessions/{id}/calls/{call_id}/reject",
+            post(calls::reject_call),
         )
         // Media
         .route("/sessions/{id}/media/{sha256}", get(media::get_media))

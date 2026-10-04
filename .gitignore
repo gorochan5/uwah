@@ -3,3 +3,4 @@ uwah.db
 uwah.log
 uwah.db-wal
 uwah.db-shm
+manual_testing/*

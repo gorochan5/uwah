@@ -12,6 +12,12 @@ dir = "d:/projects/rust/uwah/manual_testing/media"
 [sessions]
 dir = "d:/projects/rust/uwah/manual_testing/sessions"
 
+[filter]
+contacts = true
+groups = true
+channels = false
+transmission = false
+
 # [webhook]
 # enabled = false
 # url = "http://localhost:8080/webhook"

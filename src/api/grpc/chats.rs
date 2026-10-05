@@ -200,8 +200,8 @@ impl ChatService for ChatServiceImpl {
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?
             .ok_or_else(|| Status::not_found(format!("Session '{}' not found", session_id)))?;
 
-        let limit = req.limit.unwrap_or(50).clamp(1, 100);
-        let offset = req.offset.unwrap_or(0).max(0);
+        let limit = req.limit.filter(|&l| l > 0).map(|l| l.clamp(1, 100));
+        let offset = req.offset.filter(|&o| o > 0);
         let chats = repo::get_by_session_paginated(&session_id, limit, offset)
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;

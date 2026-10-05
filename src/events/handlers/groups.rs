@@ -5,6 +5,10 @@ use whatsapp_rust::types::events::GroupUpdate;
 use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
 
 pub async fn handle(session_id: &str, update: &GroupUpdate) -> Result<()> {
+    if !crate::config::get().filter.groups {
+        return Ok(());
+    }
+
     let group_jid = update.group_jid.to_string();
 
     info!(

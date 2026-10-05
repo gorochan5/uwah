@@ -33,58 +33,23 @@ pub async fn get_all() -> Result<Vec<Chat>> {
 }
 
 pub async fn get_by_session(session_id: &str) -> Result<Vec<Chat>> {
-    info!(
-        session_id = session_id,
-        "Fetching chats for session from DB"
-    );
-
-    let pool = crate::database::get();
-    sqlx::query_as!(
-        Chat,
-        r#"
-        SELECT
-            session_id,
-            jid,
-            name,
-            kind,
-            unread_count,
-            is_archived,
-            is_pinned,
-            muted_until,
-            last_message_at,
-            subject_owner,
-            subject_time,
-            created_at AS "created_at!: chrono::DateTime<chrono::Utc>",
-            updated_at AS "updated_at!: chrono::DateTime<chrono::Utc>"
-        FROM chats
-        WHERE session_id = $1
-        ORDER BY last_message_at DESC
-        "#,
-        session_id
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to fetch chats for session from DB")
+    get_by_session_paginated(session_id, None, None).await
 }
 
 pub async fn get_by_session_paginated(
     session_id: &str,
-    limit: i64,
-    offset: i64,
+    limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Vec<Chat>> {
     info!(
         session_id = session_id,
-        limit = limit,
-        offset = offset,
+        limit = ?limit,
+        offset = ?offset,
         "Fetching paginated chats for session from DB"
     );
 
     let pool = crate::database::get();
-    let limit = limit.clamp(1, 100);
-    let offset = offset.max(0);
-
-    sqlx::query_as!(
-        Chat,
+    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
         r#"
         SELECT
             session_id,
@@ -98,20 +63,29 @@ pub async fn get_by_session_paginated(
             last_message_at,
             subject_owner,
             subject_time,
-            created_at AS "created_at!: chrono::DateTime<chrono::Utc>",
-            updated_at AS "updated_at!: chrono::DateTime<chrono::Utc>"
+            created_at,
+            updated_at
         FROM chats
-        WHERE session_id = $1
-        ORDER BY last_message_at DESC
-        LIMIT $2 OFFSET $3
+        WHERE session_id = 
         "#,
-        session_id,
-        limit,
-        offset
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to fetch paginated chats for session from DB")
+    );
+    builder.push_bind(session_id);
+    builder.push(" ORDER BY last_message_at DESC");
+
+    if let Some(l) = limit {
+        let limit_val = l.clamp(1, 100);
+        let offset_val = offset.unwrap_or(0).max(0);
+        builder.push(" LIMIT ");
+        builder.push_bind(limit_val);
+        builder.push(" OFFSET ");
+        builder.push_bind(offset_val);
+    }
+
+    let query = builder.build_query_as::<Chat>();
+    query
+        .fetch_all(pool)
+        .await
+        .context("Failed to fetch chats for session from DB")
 }
 
 pub async fn get_one(jid: &str, session_id: &str) -> Result<Option<Chat>> {

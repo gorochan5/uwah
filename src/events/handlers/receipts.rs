@@ -4,6 +4,11 @@ use whatsapp_rust::types::events::Receipt;
 use whatsapp_rust::types::presence::ReceiptType;
 
 pub async fn handle(session_id: &str, receipt: &Receipt) -> Result<()> {
+    let chat_jid = receipt.source.chat.to_string();
+    if !crate::config::get().filter.is_allowed_jid(&chat_jid) {
+        return Ok(());
+    }
+
     let status_str = match receipt.r#type {
         ReceiptType::Read
         | ReceiptType::ReadSelf

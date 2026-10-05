@@ -312,28 +312,41 @@ impl MediaService for MediaServiceImpl {
 
         let final_filename = format!("{}.{}", sha256_hex, ext);
         let final_path = media_dir.join(&final_filename);
-
-        tokio::fs::write(&final_path, &bytes)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to persist media: {}", e)))?;
-
         let disk_path_str = final_path.to_str().unwrap_or(&final_filename).to_string();
 
-        repo::upsert(
-            &sha256_hex,
-            &disk_path_str,
-            &mime_type,
-            bytes.len() as i64,
-        )
-        .await
-        .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+        let (final_disk_path, final_mime) = if let Ok(Some(existing)) = repo::get_one(&sha256_hex).await
+            && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
+        {
+            let _ = repo::touch_last_accessed(&sha256_hex).await;
+            tracing::info!(
+                media_sha256 = %sha256_hex,
+                disk_path = %existing.disk_path,
+                "Media cache hit, skipping disk write and DB upsert"
+            );
+            (existing.disk_path, existing.mime_type)
+        } else {
+            tokio::fs::write(&final_path, &bytes)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to persist media: {}", e)))?;
+
+            repo::upsert(
+                &sha256_hex,
+                &disk_path_str,
+                &mime_type,
+                bytes.len() as i64,
+            )
+            .await
+            .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+
+            (disk_path_str, mime_type)
+        };
 
         let url = format!("/sessions/{}/media/{}", session_id, sha256_hex);
 
         Ok(Response::new(UploadMediaResponse {
             sha256: sha256_hex,
-            disk_path: disk_path_str,
-            mime_type,
+            disk_path: final_disk_path,
+            mime_type: final_mime,
             file_size: bytes.len() as i64,
             url,
         }))

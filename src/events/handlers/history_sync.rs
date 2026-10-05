@@ -27,6 +27,15 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
             continue;
         }
 
+        if !crate::config::get().filter.is_allowed_jid(chat_jid) {
+            tracing::debug!(
+                session_id = %session_id,
+                chat_jid = %chat_jid,
+                "Skipping conversation in HistorySync due to [filter] configuration"
+            );
+            continue;
+        }
+
         total_conversations += 1;
 
         // 1. Ensure chat exists in DB so FK constraint never fails
@@ -202,39 +211,65 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
     match stream.remainder() {
         Ok(remainder) => {
             let mut total_contacts = 0usize;
-            for pushname in &remainder.pushnames {
-                let Some(jid) = pushname.id.as_deref() else {
-                    continue;
-                };
-                if jid.is_empty() {
-                    continue;
+            if crate::config::get().filter.contacts {
+                for mapping in &remainder.phone_number_to_lid_mappings {
+                    let Some(pn_jid) = mapping.pn_jid.as_deref() else {
+                        continue;
+                    };
+                    let Some(lid_jid) = mapping.lid_jid.as_deref() else {
+                        continue;
+                    };
+                    if pn_jid.is_empty() || lid_jid.is_empty() {
+                        continue;
+                    }
+
+                    if let Err(err) =
+                        crate::repository::contacts::link_lid_to_pn(session_id, pn_jid, lid_jid).await
+                    {
+                        error!(
+                            session_id = %session_id,
+                            pn_jid = %pn_jid,
+                            lid_jid = %lid_jid,
+                            error = %err,
+                            "Failed to link LID to PN contact from HistorySync"
+                        );
+                    }
                 }
 
-                let phone = jid.split('@').next().map(str::to_string);
-                let contact = Contact {
-                    session_id: session_id.to_string(),
-                    jid: jid.to_string(),
-                    lid_jid: None,
-                    phone_number: phone,
-                    push_name: pushname.pushname.clone(),
-                    status_text: None,
-                    profile_pic_url: None,
-                    is_business: false,
-                    username: None,
-                    devices: None,
-                    verified_name: None,
-                    updated_at: chrono::Utc::now(),
-                };
+                for pushname in &remainder.pushnames {
+                    let Some(jid) = pushname.id.as_deref() else {
+                        continue;
+                    };
+                    if jid.is_empty() {
+                        continue;
+                    }
 
-                if let Err(err) = crate::repository::contacts::upsert(&contact).await {
-                    error!(
-                        session_id = %session_id,
-                        jid = %jid,
-                        error = %err,
-                        "Failed to upsert contact pushname from HistorySync"
-                    );
-                } else {
-                    total_contacts += 1;
+                    let phone = jid.split('@').next().map(str::to_string);
+                    let contact = Contact {
+                        session_id: session_id.to_string(),
+                        jid: jid.to_string(),
+                        lid_jid: None,
+                        phone_number: phone,
+                        push_name: pushname.pushname.clone(),
+                        status_text: None,
+                        profile_pic_url: None,
+                        is_business: false,
+                        username: None,
+                        devices: None,
+                        verified_name: None,
+                        updated_at: chrono::Utc::now(),
+                    };
+
+                    if let Err(err) = crate::repository::contacts::upsert(&contact).await {
+                        error!(
+                            session_id = %session_id,
+                            jid = %jid,
+                            error = %err,
+                            "Failed to upsert contact pushname from HistorySync"
+                        );
+                    } else {
+                        total_contacts += 1;
+                    }
                 }
             }
 

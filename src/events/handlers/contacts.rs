@@ -4,6 +4,10 @@ use tracing::info;
 use whatsapp_rust::types::events::{ContactNumberChanged, ContactUpdated};
 
 pub async fn handle_updated(session_id: &str, update: &ContactUpdated) -> Result<()> {
+    if !crate::config::get().filter.contacts {
+        return Ok(());
+    }
+
     let jid = update.jid.to_string();
     info!(
         session_id = %session_id,
@@ -31,6 +35,9 @@ pub async fn handle_updated(session_id: &str, update: &ContactUpdated) -> Result
 }
 
 pub async fn handle_changed(session_id: &str, update: &ContactNumberChanged) -> Result<()> {
+    if !crate::config::get().filter.contacts {
+        return Ok(());
+    }
     let old_jid = update.old_jid.to_string();
     let new_jid = update.new_jid.to_string();
     let new_lid = update.new_lid.as_ref().map(|j| j.to_string());

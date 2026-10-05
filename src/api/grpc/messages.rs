@@ -548,17 +548,30 @@ impl MessageService for MessageServiceImpl {
         };
         let disk_filename = format!("{}.{}", sha256_hex, ext);
         let disk_path = media_dir.join(&disk_filename);
-        tokio::fs::write(&disk_path, &bytes)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to persist media to disk: {}", e)))?;
+        let disk_path_str = disk_path.to_str().unwrap_or(&disk_filename).to_string();
 
-        let _ = crate::repository::media_cache::upsert(
-            &sha256_hex,
-            disk_path.to_str().unwrap_or(&disk_filename),
-            &req.mimetype,
-            bytes.len() as i64,
-        )
-        .await;
+        if let Ok(Some(existing)) = crate::repository::media_cache::get_one(&sha256_hex).await
+            && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
+        {
+            let _ = crate::repository::media_cache::touch_last_accessed(&sha256_hex).await;
+            tracing::info!(
+                media_sha256 = %sha256_hex,
+                disk_path = %existing.disk_path,
+                "Media cache hit, skipping disk write and DB upsert"
+            );
+        } else {
+            tokio::fs::write(&disk_path, &bytes)
+                .await
+                .map_err(|e| Status::internal(format!("Failed to persist media to disk: {}", e)))?;
+
+            let _ = crate::repository::media_cache::upsert(
+                &sha256_hex,
+                &disk_path_str,
+                &req.mimetype,
+                bytes.len() as i64,
+            )
+            .await;
+        }
 
         let media_kind = match req.media_type.as_str() {
             "image" => MediaType::Image,

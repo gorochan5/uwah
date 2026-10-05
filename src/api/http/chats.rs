@@ -161,7 +161,7 @@ pub struct GroupInviteLinkResponse {
     path = "/sessions/{id}/chats",
     tag = "Chats",
     summary = "List chats",
-    description = "Retrieves conversation threads for the specified session with limit and offset pagination.",
+    description = "Retrieves conversation threads for the specified session with optional pagination. When limit is omitted, all chats are returned.",
     params(
         ("id" = String, Path, description = "Session identifier"),
         ListChatsQuery
@@ -182,8 +182,8 @@ pub async fn list_chats(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let limit = query.limit.unwrap_or(50).clamp(1, 100);
-    let offset = query.offset.unwrap_or(0).max(0);
+    let limit = query.limit.map(|l| l.clamp(1, 100));
+    let offset = query.offset.map(|o| o.max(0));
     let chats = repo::get_by_session_paginated(&session_id, limit, offset).await?;
     Ok(Json(chats))
 }

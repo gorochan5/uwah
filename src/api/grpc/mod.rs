@@ -59,6 +59,7 @@ pub async fn start_grpc_server(
         .build_v1()?;
 
     Server::builder()
+        .layer(GrpcLogLayer)
         .add_service(reflection_svc)
         .add_service(EventStreamServiceServer::with_interceptor(
             events_svc,
@@ -111,6 +112,52 @@ pub async fn start_grpc_server(
         .await?;
 
     Ok(())
+}
+
+#[derive(Clone, Default)]
+pub struct GrpcLogLayer;
+
+impl<S> tower::Layer<S> for GrpcLogLayer {
+    type Service = GrpcLogService<S>;
+
+    fn layer(&self, service: S) -> Self::Service {
+        GrpcLogService { inner: service }
+    }
+}
+
+#[derive(Clone)]
+pub struct GrpcLogService<S> {
+    inner: S,
+}
+
+impl<S, ReqBody, ResBody> tower::Service<axum::http::Request<ReqBody>> for GrpcLogService<S>
+where
+    S: tower::Service<axum::http::Request<ReqBody>, Response = axum::http::Response<ResBody>>,
+    S::Future: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: axum::http::Request<ReqBody>) -> Self::Future {
+        let method = req.method().clone();
+        let fut = self.inner.call(req);
+        Box::pin(async move {
+            let res = fut.await?;
+            let status = res.status();
+            tracing::info!("GRPC {} {}", method, status.as_u16());
+            Ok(res)
+        })
+    }
 }
 
 /// Creates a Tonic interceptor enforcing `authorization: Bearer <TOKEN>` authentication

@@ -339,25 +339,38 @@ pub async fn upload_media(
     let ext = mime_to_extension(&content_type);
     let final_filename = format!("{}.{}", sha256_hex, ext);
     let final_path = media_dir.join(&final_filename);
-
-    tokio::fs::rename(&temp_path, &final_path)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to finalize media file: {}", e)))?;
-
     let disk_path_str = final_path.to_str().unwrap_or(&final_filename).to_string();
 
-    repo::upsert(
-        &sha256_hex,
-        &disk_path_str,
-        &content_type,
-        total_bytes as i64,
-    )
-    .await?;
+    let (final_disk_path, final_mime) = if let Ok(Some(existing)) = repo::get_one(&sha256_hex).await
+        && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
+    {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        let _ = repo::touch_last_accessed(&sha256_hex).await;
+        tracing::info!(
+            media_sha256 = %sha256_hex,
+            disk_path = %existing.disk_path,
+            "Media cache hit, skipping disk write and DB upsert"
+        );
+        (existing.disk_path, existing.mime_type)
+    } else {
+        tokio::fs::rename(&temp_path, &final_path)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to finalize media file: {}", e)))?;
+
+        repo::upsert(
+            &sha256_hex,
+            &disk_path_str,
+            &content_type,
+            total_bytes as i64,
+        )
+        .await?;
+        (disk_path_str, content_type)
+    };
 
     let resp = UploadMediaResponse {
         sha256: sha256_hex.clone(),
-        disk_path: disk_path_str,
-        mime_type: content_type,
+        disk_path: final_disk_path,
+        mime_type: final_mime,
         file_size: total_bytes as i64,
         url: format!("/sessions/{}/media/{}", session_id, sha256_hex),
     };

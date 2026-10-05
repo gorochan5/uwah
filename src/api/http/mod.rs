@@ -217,5 +217,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(view_routes)
         .merge(protected_routes)
         .merge(protected_swagger)
+        .layer(middleware::from_fn(rest_access_log_middleware))
         .with_state(state)
+}
+
+async fn rest_access_log_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = req.method().clone();
+    let response = next.run(req).await;
+    tracing::info!("REST {} {}", method, response.status().as_u16());
+    response
 }

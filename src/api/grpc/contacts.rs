@@ -56,9 +56,9 @@ impl ContactService for ContactServiceImpl {
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?
             .ok_or_else(|| Status::not_found(format!("Session '{}' not found", session_id)))?;
 
-        let limit = req.limit.unwrap_or(50).clamp(1, 100);
-        let offset = req.offset.unwrap_or(0).max(0);
-        let contacts = repo::get_by_session_paginated(&session_id, limit, offset)
+        let limit = req.limit.filter(|&l| l > 0).map(|l| l.clamp(1, 100));
+        let offset = req.offset.filter(|&o| o > 0);
+        let contacts = repo::get_by_session_paginated(&session_id, limit, offset, None)
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
 
@@ -305,28 +305,62 @@ impl ContactService for ContactServiceImpl {
 
         match pic_opt {
             Some(pic) => {
+                let pic_url_unchanged = repo::get_one(&jid, &session_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|c| c.profile_pic_url)
+                    .map(|url| url == pic.url)
+                    .unwrap_or(false);
+
                 let _ = repo::update_profile_pic_url(&session_id, &jid, &pic.url).await;
 
-                let download_url = pic.url.clone();
-                let media_dir = self.state.config.media.dir.clone();
-                tokio::spawn(async move {
-                    if let Ok(resp) = reqwest::get(&download_url).await
-                        && resp.status().is_success()
-                        && let Ok(bytes) = resp.bytes().await
-                    {
-                        use sha2::Digest;
-                        let sha256_hex = hex::encode(sha2::Sha256::digest(&bytes));
-                        let file_path = std::path::Path::new(&media_dir).join(format!("{}.jpg", sha256_hex));
-                        let _ = std::fs::create_dir_all(&media_dir);
-                        let _ = tokio::fs::write(&file_path, &bytes).await;
-                        let _ = crate::repository::media_cache::upsert(
-                            &sha256_hex,
-                            file_path.to_string_lossy().as_ref(),
-                            "image/jpeg",
-                            bytes.len() as i64,
-                        ).await;
-                    }
-                });
+                if pic_url_unchanged {
+                    tracing::info!(
+                        contact_jid = %jid,
+                        "Profile picture URL unchanged, skipping background download"
+                    );
+                } else {
+                    let download_url = pic.url.clone();
+                    let media_dir = self.state.config.media.dir.clone();
+                    tokio::spawn(async move {
+                        if let Ok(resp) = reqwest::get(&download_url).await
+                            && resp.status().is_success()
+                            && let Ok(bytes) = resp.bytes().await
+                        {
+                            use sha2::Digest;
+                            let sha256_hex = hex::encode(sha2::Sha256::digest(&bytes));
+                            let file_path =
+                                std::path::Path::new(&media_dir).join(format!("{}.jpg", sha256_hex));
+                            let disk_path_str = file_path.to_string_lossy().to_string();
+
+                            if let Ok(Some(existing)) =
+                                crate::repository::media_cache::get_one(&sha256_hex).await
+                                && tokio::fs::try_exists(&existing.disk_path)
+                                    .await
+                                    .unwrap_or(false)
+                            {
+                                let _ = crate::repository::media_cache::touch_last_accessed(&sha256_hex)
+                                    .await;
+                                tracing::info!(
+                                    media_sha256 = %sha256_hex,
+                                    disk_path = %existing.disk_path,
+                                    "Profile picture cache hit, skipping disk write and DB upsert"
+                                );
+                            } else {
+                                let _ = std::fs::create_dir_all(&media_dir);
+                                let _ = tokio::fs::write(&file_path, &bytes).await;
+                                let _ = crate::repository::media_cache::upsert(
+                                    &sha256_hex,
+                                    &disk_path_str,
+                                    "image/jpeg",
+                                    bytes.len() as i64,
+                                )
+                                .await;
+                            }
+                        }
+                    });
+                }
 
                 Ok(Response::new(GetProfilePictureResponse {
                     id: pic.id,

@@ -18,6 +18,10 @@ pub async fn handle(session_id: &str, call: &IncomingCall) -> Result<()> {
                 .unwrap_or_else(|| call.from.to_string());
             let caller_jid = call_creator.to_string();
 
+            if !crate::config::get().filter.is_allowed_jid(&chat_jid) {
+                return Ok(());
+            }
+
             info!(
                 session_id = %session_id,
                 call_id = %call_id,

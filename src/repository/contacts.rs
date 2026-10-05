@@ -33,57 +33,25 @@ pub async fn get_all() -> Result<Vec<Contact>> {
 }
 
 pub async fn get_by_session(session_id: &str) -> Result<Vec<Contact>> {
-    info!(
-        session_id = session_id,
-        "Fetching contacts for session from DB"
-    );
-
-    let pool = crate::database::get();
-    sqlx::query_as!(
-        Contact,
-        r#"
-        SELECT
-            session_id,
-            jid,
-            lid_jid,
-            phone_number,
-            push_name,
-            status_text,
-            profile_pic_url,
-            is_business,
-            username,
-            devices,
-            verified_name,
-            updated_at AS "updated_at: chrono::DateTime<chrono::Utc>"
-        FROM contacts
-        WHERE session_id = $1
-        ORDER BY push_name ASC, jid ASC
-        "#,
-        session_id
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to fetch contacts for session from DB")
+    get_by_session_paginated(session_id, None, None, None).await
 }
 
 pub async fn get_by_session_paginated(
     session_id: &str,
-    limit: i64,
-    offset: i64,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    search: Option<&str>,
 ) -> Result<Vec<Contact>> {
     info!(
         session_id = session_id,
-        limit = limit,
-        offset = offset,
-        "Fetching paginated contacts for session from DB"
+        limit = ?limit,
+        offset = ?offset,
+        search = ?search,
+        "Fetching contacts for session from DB"
     );
 
     let pool = crate::database::get();
-    let limit = limit.clamp(1, 100);
-    let offset = offset.max(0);
-
-    sqlx::query_as!(
-        Contact,
+    let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
         r#"
         SELECT
             session_id,
@@ -97,19 +65,45 @@ pub async fn get_by_session_paginated(
             username,
             devices,
             verified_name,
-            updated_at AS "updated_at: chrono::DateTime<chrono::Utc>"
+            updated_at
         FROM contacts
-        WHERE session_id = $1
-        ORDER BY push_name ASC, jid ASC
-        LIMIT $2 OFFSET $3
-        "#,
-        session_id,
-        limit,
-        offset
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to fetch paginated contacts for session from DB")
+        WHERE session_id = 
+        "#
+    );
+    builder.push_bind(session_id);
+
+    if let Some(s) = search {
+        let s = s.trim();
+        if !s.is_empty() {
+            let pattern = format!("%{}%", s);
+            builder.push(" AND (push_name LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR phone_number LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR jid LIKE ");
+            builder.push_bind(pattern.clone());
+            builder.push(" OR lid_jid LIKE ");
+            builder.push_bind(pattern);
+            builder.push(")");
+        }
+    }
+
+    builder.push(" ORDER BY (push_name IS NULL OR push_name = '') ASC, push_name COLLATE NOCASE ASC, phone_number ASC, jid ASC");
+
+    if let Some(l) = limit {
+        let limit_val = l.clamp(1, 100);
+        let offset_val = offset.unwrap_or(0).max(0);
+        builder.push(" LIMIT ");
+        builder.push_bind(limit_val);
+        builder.push(" OFFSET ");
+        builder.push_bind(offset_val);
+    }
+
+    let query = builder.build_query_as::<Contact>();
+    query
+        .fetch_all(pool)
+        .await
+        .context("Failed to fetch contacts for session from DB")
 }
 
 pub async fn get_one(jid: &str, session_id: &str) -> Result<Option<Contact>> {
@@ -396,9 +390,117 @@ pub async fn delete(jid: &str, session_id: &str) -> Result<SqliteQueryResult> {
     .context("Failed to delete contact from DB")
 }
 
+pub async fn link_lid_to_pn(session_id: &str, pn_jid: &str, lid_jid: &str) -> Result<()> {
+    let pool = crate::database::get();
+    let mut tx = pool
+        .begin()
+        .await
+        .context("Failed to begin transaction to link LID to PN")?;
+
+    // Check if orphaned LID row exists
+    let orphaned = sqlx::query!(
+        r#"
+        SELECT profile_pic_url, status_text, verified_name, push_name
+        FROM contacts
+        WHERE session_id = $1 AND jid = $2
+        "#,
+        session_id,
+        lid_jid
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .context("Failed to check for orphaned LID contact")?;
+
+    let phone = pn_jid.split('@').next();
+
+    if let Some(orphan) = orphaned {
+        // Merge orphaned LID fields into pn_jid row (inserting if not exists, or updating)
+        sqlx::query!(
+            r#"
+            INSERT INTO contacts (
+                session_id,
+                jid,
+                lid_jid,
+                phone_number,
+                push_name,
+                status_text,
+                profile_pic_url,
+                verified_name,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
+            ON CONFLICT(session_id, jid) DO UPDATE SET
+                lid_jid = $3,
+                phone_number = COALESCE(contacts.phone_number, excluded.phone_number),
+                push_name = COALESCE(contacts.push_name, excluded.push_name),
+                status_text = COALESCE(contacts.status_text, excluded.status_text),
+                profile_pic_url = COALESCE(contacts.profile_pic_url, excluded.profile_pic_url),
+                verified_name = COALESCE(contacts.verified_name, excluded.verified_name),
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            session_id,
+            pn_jid,
+            lid_jid,
+            phone,
+            orphan.push_name,
+            orphan.status_text,
+            orphan.profile_pic_url,
+            orphan.verified_name,
+        )
+        .execute(&mut *tx)
+        .await
+        .context("Failed to merge LID contact into PN contact")?;
+
+        // Delete the orphaned LID row
+        sqlx::query!(
+            r#"
+            DELETE FROM contacts
+            WHERE session_id = $1 AND jid = $2
+            "#,
+            session_id,
+            lid_jid
+        )
+        .execute(&mut *tx)
+        .await
+        .context("Failed to delete orphaned LID contact")?;
+    } else {
+        // Update pn_jid row's lid_jid (or insert if not exists)
+        sqlx::query!(
+            r#"
+            INSERT INTO contacts (
+                session_id,
+                jid,
+                lid_jid,
+                phone_number,
+                updated_at
+            )
+            VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+            ON CONFLICT(session_id, jid) DO UPDATE SET
+                lid_jid = $3,
+                phone_number = COALESCE(contacts.phone_number, excluded.phone_number),
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+            session_id,
+            pn_jid,
+            lid_jid,
+            phone
+        )
+        .execute(&mut *tx)
+        .await
+        .context("Failed to link LID to PN contact")?;
+    }
+
+    tx.commit()
+        .await
+        .context("Failed to commit link LID to PN transaction")?;
+
+    Ok(())
+}
+
 /// Idempotently ensures a contact exists for the session.
 /// If the JID already exists in contacts: does nothing.
-/// If the JID does NOT exist: adds new contact using pushname as contact name if present, or JID as contact name if absent.
+/// If the JID is a LID and already mapped to a contact (via lid_jid): does nothing.
+/// If the JID does NOT exist: adds new contact using pushname as contact name if present, or None if absent.
 pub async fn ensure_exists(
     session_id: &str,
     jid: &str,
@@ -421,13 +523,32 @@ pub async fn ensure_exists(
     .await
     .context("Failed to assert session exists for contact")?;
 
-    // 2. Select contact name: pushname if present and non-empty, otherwise JID
+    // 2. If jid is a LID, check if a contact row already exists with lid_jid = jid
+    if jid.ends_with("@lid") {
+        let existing = sqlx::query!(
+            r#"
+            SELECT jid FROM contacts
+            WHERE session_id = $1 AND lid_jid = $2
+            LIMIT 1
+            "#,
+            session_id,
+            jid
+        )
+        .fetch_optional(pool)
+        .await
+        .context("Failed to check for existing contact by lid_jid")?;
+
+        if existing.is_some() {
+            return Ok(SqliteQueryResult::default());
+        }
+    }
+
+    // 3. Select contact name: pushname if present and non-empty, otherwise None
     let contact_name = push_name
         .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(jid);
+        .filter(|s| !s.is_empty());
 
-    // 3. Insert new contact; if already exists, do nothing
+    // 4. Insert new contact; if already exists, do nothing
     sqlx::query!(
         r#"
         INSERT INTO contacts (

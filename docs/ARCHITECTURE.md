@@ -94,8 +94,8 @@ To guarantee cryptographic integrity and complete isolation between sessions, **
    Loaded once at boot using `OnceLock<Config>`. Exposed to all handlers via `&'static Config` (zero heap allocations per request).
 2. **Background Session Worker**:
    When a session is created or accessed, `SessionManager` boots an async `Bot`. The `BotHandle` is spawned on a dedicated Tokio background task (`tokio::spawn(async move { bot_handle.await })`), keeping the Noise socket and event listener alive across HTTP request boundaries.
-3. **Inbound Event Processing**:
-   The `on_message` hook intercepts real-time incoming messages, automatically ensures the corresponding chat stub exists in `uwah.db` (preventing foreign key violations), extracts payload text, and persists the record idempotently.
+3. **Inbound Event Processing & Filtering**:
+   The `on_message` hook intercepts real-time incoming messages. If a chat kind is disabled in `[filter]` (`contacts`, `groups`, `channels`, `transmission`), the gateway drops the payload before DB insertion or webhook emission. For allowed chats, it automatically ensures the corresponding chat stub exists in `uwah.db` (preventing foreign key violations), extracts payload text, and persists the record idempotently.
 4. **Outbound Messaging Pipeline**:
    The REST API retrieves the `Arc<Client>` from `SessionManager`, builds a WhatsApp `wa::Message` (with `ContextInfo` when `quoted_message_id` is present), and dispatches asynchronously through WhatsApp's encrypted channel.
 

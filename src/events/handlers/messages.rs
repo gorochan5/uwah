@@ -31,6 +31,16 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
         let is_from_me = info.source.is_from_me;
         let timestamp = info.timestamp;
 
+        if !crate::config::get().filter.is_allowed_jid(&chat_jid) {
+            tracing::debug!(
+                session_id = %session_id,
+                message_id = %msg_id,
+                chat = %chat_jid,
+                "Skipping inbound message due to [filter] configuration"
+            );
+            continue;
+        }
+
         info!(
             session_id = %session_id,
             message_id = %msg_id,

@@ -125,6 +125,64 @@ impl Webhook {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Filter {
+    /// Sync and process direct 1:1 contact messages (@s.whatsapp.net, @lid)
+    #[serde(default = "default_true")]
+    pub contacts: bool,
+
+    /// Sync and process group messages and updates (@g.us)
+    #[serde(default = "default_true")]
+    pub groups: bool,
+
+    /// Sync and process channel/newsletter messages (@newsletter)
+    #[serde(default = "default_true", alias = "newsletters")]
+    pub channels: bool,
+
+    /// Sync and process broadcast lists and status transmissions (@broadcast, status@broadcast)
+    #[serde(
+        default = "default_true",
+        alias = "broadcasts",
+        alias = "transmissions",
+        alias = "broadcast"
+    )]
+    pub transmission: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Filter {
+    fn default() -> Self {
+        Self {
+            contacts: true,
+            groups: true,
+            channels: true,
+            transmission: true,
+        }
+    }
+}
+
+impl Filter {
+    pub fn validate(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Checks whether a given WhatsApp JID should be processed according to the filter rules.
+    pub fn is_allowed_jid(&self, jid: &str) -> bool {
+        if jid.ends_with("@g.us") {
+            self.groups
+        } else if jid.ends_with("@newsletter") {
+            self.channels
+        } else if jid.ends_with("@broadcast") {
+            self.transmission
+        } else {
+            self.contacts
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub database: Database,
@@ -133,6 +191,8 @@ pub struct Config {
     pub sessions: Sessions,
     #[serde(default)]
     pub webhook: Option<Webhook>,
+    #[serde(default)]
+    pub filter: Filter,
 }
 
 impl Config {
@@ -153,6 +213,9 @@ impl Config {
             webhook
                 .validate()
                 .map_err(|err| format!("Invalid webhook config: {}", err))?;
+        }
+        if let Err(err) = self.filter.validate() {
+            return Err(format!("Invalid filter config: {}", err));
         }
         Ok(())
     }
@@ -202,4 +265,84 @@ pub fn init() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("config::init() was called more than once"))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_filter_allows_all() {
+        let filter = Filter::default();
+        assert!(filter.contacts);
+        assert!(filter.groups);
+        assert!(filter.channels);
+        assert!(filter.transmission);
+
+        assert!(filter.is_allowed_jid("5519998005388@s.whatsapp.net"));
+        assert!(filter.is_allowed_jid("123456789@lid"));
+        assert!(filter.is_allowed_jid("12036302@g.us"));
+        assert!(filter.is_allowed_jid("120363162517306880@newsletter"));
+        assert!(filter.is_allowed_jid("status@broadcast"));
+        assert!(filter.is_allowed_jid("12345@broadcast"));
+    }
+
+    #[test]
+    fn test_custom_filter_toml_parsing() {
+        let toml_str = r#"
+            [database]
+            dir = "data"
+            [service]
+            host = "0.0.0.0"
+            port = 6767
+            auth = "secret"
+            [media]
+            dir = "data/media_cache"
+            [sessions]
+            dir = "sessions"
+            [filter]
+            contacts = true
+            groups = true
+            channels = false
+            transmission = false
+        "#;
+
+        let cfg: Config = toml::from_str(toml_str).expect("Valid config TOML");
+        assert!(cfg.filter.contacts);
+        assert!(cfg.filter.groups);
+        assert!(!cfg.filter.channels);
+        assert!(!cfg.filter.transmission);
+
+        assert!(cfg.filter.is_allowed_jid("5519998005388@s.whatsapp.net"));
+        assert!(cfg.filter.is_allowed_jid("123456789@lid"));
+        assert!(cfg.filter.is_allowed_jid("12036302@g.us"));
+        assert!(!cfg.filter.is_allowed_jid("120363162517306880@newsletter"));
+        assert!(!cfg.filter.is_allowed_jid("status@broadcast"));
+        assert!(!cfg.filter.is_allowed_jid("12345@broadcast"));
+    }
+
+    #[test]
+    fn test_filter_toml_aliases() {
+        let toml_str = r#"
+            [database]
+            dir = "data"
+            [service]
+            host = "0.0.0.0"
+            port = 6767
+            auth = "secret"
+            [media]
+            dir = "data/media_cache"
+            [sessions]
+            dir = "sessions"
+            [filter]
+            newsletters = false
+            broadcasts = false
+        "#;
+
+        let cfg: Config = toml::from_str(toml_str).expect("Valid config TOML with aliases");
+        assert!(cfg.filter.contacts); // defaulted
+        assert!(cfg.filter.groups);   // defaulted
+        assert!(!cfg.filter.channels);
+        assert!(!cfg.filter.transmission);
+    }
 }

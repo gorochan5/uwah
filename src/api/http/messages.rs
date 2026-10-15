@@ -58,6 +58,14 @@ pub struct SendMediaRequest {
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+pub struct SendStickerRequest {
+    /// Base64 encoded image data (PNG, JPEG, GIF, or WebP)
+    pub data_base64: String,
+    /// Optional quoted message ID for replies
+    pub quoted_message_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ReactMessageRequest {
     /// Emoji string to react with (e.g. "👍", "❤️"), or empty string "" to remove
     pub emoji: String,
@@ -435,6 +443,12 @@ pub async fn send_media(
         }
     };
 
+    let is_anim = if req.media_type == "sticker" {
+        whatsapp_rust::webp::is_animated(&bytes)
+    } else {
+        false
+    };
+
     let upload = client
         .upload(bytes, media_kind, UploadOptions::default())
         .await
@@ -528,19 +542,20 @@ pub async fn send_media(
         },
         "sticker" => wa::Message {
             sticker_message: MessageField::some(wa::message::StickerMessage {
-                url: Some(upload.url.clone()),
-                direct_path: Some(upload.direct_path.clone()),
-                media_key: Some(upload.media_key.to_vec()),
-                file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
-                file_sha256: Some(upload.file_sha256.to_vec()),
-                file_length: Some(upload.file_length),
-                media_key_timestamp: Some(upload.media_key_timestamp),
-                mimetype: Some("image/webp".to_string()),
-                context_info,
+                    url: Some(upload.url.clone()),
+                    direct_path: Some(upload.direct_path.clone()),
+                    media_key: Some(upload.media_key.to_vec()),
+                    file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+                    file_sha256: Some(upload.file_sha256.to_vec()),
+                    file_length: Some(upload.file_length),
+                    media_key_timestamp: Some(upload.media_key_timestamp),
+                    mimetype: Some("image/webp".to_string()),
+                    is_animated: Some(is_anim),
+                    context_info,
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        },
+            },
         _ => unreachable!(),
     };
 
@@ -600,6 +615,198 @@ pub async fn send_media(
         .await?
         .ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("Failed to retrieve created media message"))
+        })?;
+
+    Ok((StatusCode::CREATED, Json(saved)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/sessions/{id}/chats/{jid}/messages/sticker",
+    tag = "Messages",
+    summary = "Send sticker message",
+    description = "Converts input image (PNG, JPEG, GIF, WebP) to a 512x512 WebP sticker, uploads to WhatsApp CDN, and transmits.",
+    params(
+        ("id" = String, Path, description = "Session identifier"),
+        ("jid" = String, Path, description = "Recipient WhatsApp JID or phone number")
+    ),
+    request_body = SendStickerRequest,
+    responses(
+        (status = 201, description = "Sticker message sent and stored", body = Message),
+        (status = 400, description = "Invalid payload or image processing failure", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Session not found", body = ErrorResponse),
+        (status = 500, description = "Failed to upload or transmit sticker", body = ErrorResponse)
+    )
+)]
+pub async fn send_sticker(
+    State(state): State<Arc<AppState>>,
+    Path((session_id, jid)): Path<(String, String)>,
+    Json(req): Json<SendStickerRequest>,
+) -> AppResult<(StatusCode, Json<Message>)> {
+    let session = session_repo::get_one(&session_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
+
+    let client = state
+        .sessions
+        .get_client(&session_id)
+        .await
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Session '{}' is not connected or active in memory. Scan QR first.",
+                session_id
+            ))
+        })?;
+
+    let raw_bytes = base64::engine::general_purpose::STANDARD
+        .decode(req.data_base64.trim())
+        .map_err(|e| AppError::BadRequest(format!("Invalid base64 payload: {}", e)))?;
+
+    if raw_bytes.is_empty() {
+        return Err(AppError::BadRequest(
+            "Sticker binary payload cannot be empty".to_string(),
+        ));
+    }
+
+    // Process image into a 512x512 WebP sticker format
+    let webp_bytes = crate::media::sticker::process_sticker_image(&raw_bytes)
+        .map_err(|e| AppError::BadRequest(format!("Sticker image processing failed: {}", e)))?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&webp_bytes);
+    let sha256_bytes = hasher.finalize();
+    let sha256_hex = hex::encode(sha256_bytes);
+
+    let media_dir = std::path::Path::new(&state.config.media.dir);
+    tokio::fs::create_dir_all(media_dir)
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to create media dir: {}", e)))?;
+
+    let disk_filename = format!("{}.webp", sha256_hex);
+    let disk_path = media_dir.join(&disk_filename);
+    let disk_path_str = disk_path.to_str().unwrap_or(&disk_filename).to_string();
+
+    if let Ok(Some(existing)) = crate::repository::media_cache::get_one(&sha256_hex).await
+        && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
+    {
+        let _ = crate::repository::media_cache::touch_last_accessed(&sha256_hex).await;
+        tracing::info!(
+            media_sha256 = %sha256_hex,
+            disk_path = %existing.disk_path,
+            "Media cache hit, skipping disk write and DB upsert"
+        );
+    } else {
+        tokio::fs::write(&disk_path, &webp_bytes).await.map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("Failed to persist sticker to disk: {}", e))
+        })?;
+
+        let _ = crate::repository::media_cache::upsert(
+            &sha256_hex,
+            &disk_path_str,
+            "image/webp",
+            webp_bytes.len() as i64,
+        )
+        .await;
+    }
+
+    let is_anim = whatsapp_rust::webp::is_animated(&webp_bytes);
+
+    let upload = client
+        .upload(webp_bytes, MediaType::Sticker, UploadOptions::default())
+        .await
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("WhatsApp CDN sticker upload failed: {}", e))
+        })?;
+
+    let parsed_jid = parse_recipient_jid(&jid)?;
+    let clean_quoted_id = req
+        .quoted_message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let context_info: MessageField<wa::ContextInfo> = if let Some(quoted_id) = clean_quoted_id {
+        MessageField::some(
+            build_quote_context(&session_id, &client, &session, &parsed_jid, quoted_id).await,
+        )
+    } else {
+        MessageField::none()
+    };
+
+    let wa_message = wa::Message {
+        sticker_message: MessageField::some(wa::message::StickerMessage {
+            url: Some(upload.url.clone()),
+            direct_path: Some(upload.direct_path.clone()),
+            media_key: Some(upload.media_key.to_vec()),
+            file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
+            file_sha256: Some(upload.file_sha256.to_vec()),
+            file_length: Some(upload.file_length),
+            media_key_timestamp: Some(upload.media_key_timestamp),
+            mimetype: Some("image/webp".to_string()),
+            is_animated: Some(is_anim),
+            context_info,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    state
+        .traffic
+        .apply_typing_jitter(
+            &session_id,
+            &parsed_jid,
+            &client,
+            0,
+            false,
+        )
+        .await;
+
+    let send_res = client
+        .send_message(parsed_jid.clone(), wa_message)
+        .await
+        .map_err(|err| {
+            AppError::Internal(anyhow::anyhow!(
+                "Failed to send sticker message over WhatsApp: {}",
+                err
+            ))
+        })?;
+
+    let sender_jid = session
+        .phone_number
+        .map(|p| format!("{}@s.whatsapp.net", p))
+        .unwrap_or_else(|| "me@s.whatsapp.net".to_string());
+
+    let chat_jid_str = parsed_jid.to_string();
+    let _ = crate::repository::chats::ensure_exists(&chat_jid_str, &session_id).await;
+    auto_register_contact_if_needed(&session_id, &parsed_jid, &chat_jid_str).await;
+
+    let message = Message {
+        id: send_res.message_id.clone(),
+        session_id: session_id.clone(),
+        chat_jid: chat_jid_str,
+        sender_jid,
+        quoted_message_id: clean_quoted_id.map(ToString::to_string),
+        is_from_me: true,
+        message_type: "sticker".to_string(),
+        body: None,
+        cdn_url: Some(upload.direct_path),
+        media_key: Some(upload.media_key.to_vec()),
+        file_enc_sha256: Some(hex::encode(upload.file_enc_sha256)),
+        media_sha256: Some(sha256_hex),
+        delivery_status: "sent".to_string(),
+        is_edited: false,
+        is_deleted: false,
+        timestamp: chrono::Utc::now(),
+    };
+
+    repo::create(&message).await?;
+    crate::api::http::metrics::inc_messages_outbound();
+
+    let saved = repo::get_one(&send_res.message_id, &session_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("Failed to retrieve created sticker message"))
         })?;
 
     Ok((StatusCode::CREATED, Json(saved)))

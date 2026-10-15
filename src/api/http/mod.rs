@@ -137,6 +137,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(messages::send_media),
         )
         .route(
+            "/sessions/{id}/chats/{jid}/messages/sticker",
+            post(messages::send_sticker),
+        )
+        .route(
             "/sessions/{id}/chats/{jid}/messages/{msg_id}",
             patch(messages::edit_message).delete(messages::delete_message),
         )

@@ -1,5 +1,5 @@
 [database]
-dir = "d:/projects/rust/uwah/manual_testing/uwah.db"
+dir = "r:/projects/rust/uwah/manual_testing/uwah.db"
 
 [service]
 host = "localhost"
@@ -7,10 +7,10 @@ port = 6767
 auth = "123"
 
 [media]
-dir = "d:/projects/rust/uwah/manual_testing/media"
+dir = "r:/projects/rust/uwah/manual_testing/media"
 
 [sessions]
-dir = "d:/projects/rust/uwah/manual_testing/sessions"
+dir = "r:/projects/rust/uwah/manual_testing/sessions"
 
 [filter]
 contacts = true

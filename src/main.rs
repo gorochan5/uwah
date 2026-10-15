@@ -8,6 +8,7 @@ mod config;
 mod database;
 pub mod events;
 mod log;
+pub mod media;
 mod models;
 mod repository;
 mod security;

@@ -11,6 +11,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 futures-util = "0.3"
 hex = "0.4"
 hmac = "0.13"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 maud = { version = "0.27.0", features = ["axum"] }
 nu-ansi-term = "0.50.3"
 prost = "0.14.4"

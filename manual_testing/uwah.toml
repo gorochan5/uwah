@@ -8,6 +8,7 @@ auth = "123"
 
 [media]
 dir = "r:/projects/rust/uwah/manual_testing/media"
+max_concurrent_downloads = 3
 
 [sessions]
 dir = "r:/projects/rust/uwah/manual_testing/sessions"

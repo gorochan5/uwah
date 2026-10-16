@@ -24,7 +24,18 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
     .await?;
 
     let mut pending_webhooks: Vec<(String, String, serde_json::Value)> = Vec::new();
-    let mut pending_downloads: Vec<(String, String, (String, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>, u64, String))> = Vec::new();
+    let mut pending_downloads: Vec<(
+        String,
+        String,
+        (
+            String,
+            Vec<u8>,
+            Option<Vec<u8>>,
+            Option<Vec<u8>>,
+            u64,
+            String,
+        ),
+    )> = Vec::new();
 
     for inbound in batch.iter() {
         let info = &inbound.info;
@@ -153,7 +164,11 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
             None => (None, None, None, None),
         };
 
-        let delivery_status = if is_from_me { "sent".to_string() } else { "received".to_string() };
+        let delivery_status = if is_from_me {
+            "sent".to_string()
+        } else {
+            "received".to_string()
+        };
 
         let db_message = Message {
             id: msg_id.clone(),
@@ -247,14 +262,23 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
 
         // 8. Auto-register contact on message
         let contact_jid = if info.source.is_group {
-            if is_from_me { None } else { Some(&info.source.sender) }
+            if is_from_me {
+                None
+            } else {
+                Some(&info.source.sender)
+            }
         } else if is_from_me {
             Some(&info.source.chat)
         } else {
             Some(&info.source.sender)
         };
 
-        let eligible_target = contact_jid.filter(|t| matches!(t.server, whatsapp_rust::Server::Pn | whatsapp_rust::Server::Lid));
+        let eligible_target = contact_jid.filter(|t| {
+            matches!(
+                t.server,
+                whatsapp_rust::Server::Pn | whatsapp_rust::Server::Lid
+            )
+        });
 
         if let Some(target) = eligible_target {
             let target_str = target.to_string();
@@ -266,7 +290,10 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
 
             let alt_jid_str = info.source.sender_alt.as_ref().map(ToString::to_string);
             let (phone, lid) = if target.server == whatsapp_rust::Server::Lid {
-                (info.source.sender_alt.as_ref().map(|j| j.user.as_str()), Some(target_str.as_str()))
+                (
+                    info.source.sender_alt.as_ref().map(|j| j.user.as_str()),
+                    Some(target_str.as_str()),
+                )
             } else {
                 (Some(target.user.as_str()), alt_jid_str.as_deref())
             };
@@ -322,8 +349,18 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
         let session_id_owned = session_id.to_string();
 
         tokio::spawn(async move {
-            for (msg_id, chat_jid, (direct_path, media_key, raw_file_sha256, raw_file_enc_sha256, file_length, msg_type)) in
-                pending_downloads
+            for (
+                msg_id,
+                chat_jid,
+                (
+                    direct_path,
+                    media_key,
+                    raw_file_sha256,
+                    raw_file_enc_sha256,
+                    file_length,
+                    msg_type,
+                ),
+            ) in pending_downloads
             {
                 let _ = crate::media::downloader::download_and_cache_media(
                     &client_clone,

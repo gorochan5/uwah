@@ -1,11 +1,11 @@
 use crate::events::extractor;
 use crate::models::messages::Message;
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::info;
+use whatsapp_rust::prelude::Client;
 use whatsapp_rust::types::events::MessageBatch;
 use whatsapp_rust::types::message::EditAttribute;
-use whatsapp_rust::prelude::Client;
-use std::sync::Arc;
 
 pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>) -> Result<()> {
     let pool = crate::database::get();
@@ -90,8 +90,7 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
         };
 
         // 4. Handle edit and revoke protocol actions
-        if is_revoked
-            && let Some(target_id) = &extracted.edit_target_id {
+        if is_revoked && let Some(target_id) = &extracted.edit_target_id {
             sqlx::query!(
                 "UPDATE messages SET is_deleted = 1 WHERE id = $1 AND session_id = $2",
                 target_id,
@@ -111,8 +110,7 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
             ));
         }
 
-        if is_edited
-            && let Some(target_id) = &extracted.edit_target_id {
+        if is_edited && let Some(target_id) = &extracted.edit_target_id {
             let edit_body = extracted.body.as_deref();
             sqlx::query!(
                 "UPDATE messages SET body = $1, is_edited = 1 WHERE id = $2 AND session_id = $3",
@@ -155,11 +153,7 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
             None => (None, None, None, None),
         };
 
-        let delivery_status = if is_from_me {
-            "sent".to_string()
-        } else {
-            "received".to_string()
-        };
+        let delivery_status = if is_from_me { "sent".to_string() } else { "received".to_string() };
 
         let db_message = Message {
             id: msg_id.clone(),
@@ -253,23 +247,14 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
 
         // 8. Auto-register contact on message
         let contact_jid = if info.source.is_group {
-            if is_from_me {
-                None
-            } else {
-                Some(&info.source.sender)
-            }
+            if is_from_me { None } else { Some(&info.source.sender) }
         } else if is_from_me {
             Some(&info.source.chat)
         } else {
             Some(&info.source.sender)
         };
 
-        let eligible_target = contact_jid.filter(|t| {
-            matches!(
-                t.server,
-                whatsapp_rust::Server::Pn | whatsapp_rust::Server::Lid
-            )
-        });
+        let eligible_target = contact_jid.filter(|t| matches!(t.server, whatsapp_rust::Server::Pn | whatsapp_rust::Server::Lid));
 
         if let Some(target) = eligible_target {
             let target_str = target.to_string();
@@ -281,10 +266,7 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
 
             let alt_jid_str = info.source.sender_alt.as_ref().map(ToString::to_string);
             let (phone, lid) = if target.server == whatsapp_rust::Server::Lid {
-                (
-                    info.source.sender_alt.as_ref().map(|j| j.user.as_str()),
-                    Some(target_str.as_str()),
-                )
+                (info.source.sender_alt.as_ref().map(|j| j.user.as_str()), Some(target_str.as_str()))
             } else {
                 (Some(target.user.as_str()), alt_jid_str.as_deref())
             };
@@ -340,7 +322,9 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
         let session_id_owned = session_id.to_string();
 
         tokio::spawn(async move {
-            for (msg_id, chat_jid, (direct_path, media_key, raw_file_sha256, raw_file_enc_sha256, file_length, msg_type)) in pending_downloads {
+            for (msg_id, chat_jid, (direct_path, media_key, raw_file_sha256, raw_file_enc_sha256, file_length, msg_type)) in
+                pending_downloads
+            {
                 let _ = crate::media::downloader::download_and_cache_media(
                     &client_clone,
                     &session_id_owned,

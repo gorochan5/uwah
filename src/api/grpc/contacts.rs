@@ -323,6 +323,8 @@ impl ContactService for ContactServiceImpl {
                 } else {
                     let download_url = pic.url.clone();
                     let media_dir = self.state.config.media.dir.clone();
+                    let contact_jid_for_pic = jid.clone();
+                    let session_id_for_pic = session_id.clone();
                     tokio::spawn(async move {
                         if let Ok(resp) = reqwest::get(&download_url).await
                             && resp.status().is_success()
@@ -330,8 +332,28 @@ impl ContactService for ContactServiceImpl {
                         {
                             use sha2::Digest;
                             let sha256_hex = hex::encode(sha2::Sha256::digest(&bytes));
-                            let file_path =
-                                std::path::Path::new(&media_dir).join(format!("{}.jpg", sha256_hex));
+                            let is_group = contact_jid_for_pic.ends_with("@g.us");
+                            let name_or_jid = if is_group {
+                                crate::repository::chats::get_one(&contact_jid_for_pic, &session_id_for_pic)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|c| c.name)
+                                    .unwrap_or_else(|| contact_jid_for_pic.clone())
+                            } else {
+                                crate::repository::contacts::get_one(&contact_jid_for_pic, &session_id_for_pic)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|c| c.push_name.or(c.phone_number))
+                                    .unwrap_or_else(|| contact_jid_for_pic.clone())
+                            };
+                            let file_path = crate::media::storage::get_profile_picture_path(
+                                &media_dir,
+                                is_group,
+                                &name_or_jid,
+                                &sha256_hex,
+                            );
                             let disk_path_str = file_path.to_string_lossy().to_string();
 
                             if let Ok(Some(existing)) =
@@ -348,7 +370,9 @@ impl ContactService for ContactServiceImpl {
                                     "Profile picture cache hit, skipping disk write and DB upsert"
                                 );
                             } else {
-                                let _ = std::fs::create_dir_all(&media_dir);
+                                if let Some(parent) = file_path.parent() {
+                                    let _ = tokio::fs::create_dir_all(parent).await;
+                                }
                                 let _ = tokio::fs::write(&file_path, &bytes).await;
                                 let _ = crate::repository::media_cache::upsert(
                                     &sha256_hex,

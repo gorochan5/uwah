@@ -402,9 +402,32 @@ pub async fn send_media(
             .unwrap_or("bin"),
         _ => "bin",
     };
-    let disk_filename = format!("{}.{}", sha256_hex, ext);
-    let disk_path = media_dir.join(&disk_filename);
-    let disk_path_str = disk_path.to_str().unwrap_or(&disk_filename).to_string();
+    let is_group = jid.ends_with("@g.us");
+    let chat_name = if is_group {
+        crate::repository::chats::get_one(&jid, &session_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.name)
+            .unwrap_or_else(|| jid.clone())
+    } else {
+        crate::repository::contacts::get_one(&jid, &session_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.push_name.or(c.phone_number))
+            .unwrap_or_else(|| jid.clone())
+    };
+
+    let disk_path = crate::media::storage::get_chat_media_path(
+        &state.config.media.dir,
+        is_group,
+        &chat_name,
+        &req.media_type,
+        &sha256_hex,
+        ext,
+    );
+    let disk_path_str = disk_path.to_string_lossy().to_string();
 
     if let Ok(Some(existing)) = crate::repository::media_cache::get_one(&sha256_hex).await
         && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
@@ -416,6 +439,9 @@ pub async fn send_media(
             "Media cache hit, skipping disk write and DB upsert"
         );
     } else {
+        if let Some(parent) = disk_path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
         tokio::fs::write(&disk_path, &bytes).await.map_err(|e| {
             AppError::Internal(anyhow::anyhow!("Failed to persist media to disk: {}", e))
         })?;
@@ -683,9 +709,32 @@ pub async fn send_sticker(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("Failed to create media dir: {}", e)))?;
 
-    let disk_filename = format!("{}.webp", sha256_hex);
-    let disk_path = media_dir.join(&disk_filename);
-    let disk_path_str = disk_path.to_str().unwrap_or(&disk_filename).to_string();
+    let is_group = jid.ends_with("@g.us");
+    let chat_name = if is_group {
+        crate::repository::chats::get_one(&jid, &session_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.name)
+            .unwrap_or_else(|| jid.clone())
+    } else {
+        crate::repository::contacts::get_one(&jid, &session_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.push_name.or(c.phone_number))
+            .unwrap_or_else(|| jid.clone())
+    };
+
+    let disk_path = crate::media::storage::get_chat_media_path(
+        &state.config.media.dir,
+        is_group,
+        &chat_name,
+        "sticker",
+        &sha256_hex,
+        "webp",
+    );
+    let disk_path_str = disk_path.to_string_lossy().to_string();
 
     if let Ok(Some(existing)) = crate::repository::media_cache::get_one(&sha256_hex).await
         && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
@@ -697,6 +746,9 @@ pub async fn send_sticker(
             "Media cache hit, skipping disk write and DB upsert"
         );
     } else {
+        if let Some(parent) = disk_path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
         tokio::fs::write(&disk_path, &webp_bytes).await.map_err(|e| {
             AppError::Internal(anyhow::anyhow!("Failed to persist sticker to disk: {}", e))
         })?;

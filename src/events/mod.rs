@@ -17,7 +17,7 @@ pub async fn dispatch(
     session_mgr: SessionManager,
 ) {
     let result = match &*event {
-        Event::Messages(batch) => handlers::messages::handle(&session_id, batch).await,
+        Event::Messages(batch) => handlers::messages::handle(&session_id, batch, &client).await,
         Event::Receipt(receipt) => handlers::receipts::handle(&session_id, receipt).await,
         Event::GroupUpdate(update) => handlers::groups::handle(&session_id, update).await,
         Event::IncomingCall(call) => handlers::calls::handle(&session_id, call).await,

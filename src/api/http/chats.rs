@@ -15,10 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
-use whatsapp_rust::{
-    GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupSubject, Jid,
-    PreviousDescription, Server,
-};
+use whatsapp_rust::{GroupCreateOptions, GroupDescription, GroupParticipantOptions, GroupSubject, Jid, PreviousDescription, Server};
 
 pub(crate) fn parse_target_jid(jid: &str) -> Result<Jid, AppError> {
     let normalized = if !jid.contains('@') {
@@ -26,8 +23,7 @@ pub(crate) fn parse_target_jid(jid: &str) -> Result<Jid, AppError> {
     } else {
         jid.to_string()
     };
-    Jid::from_str(&normalized)
-        .map_err(|e| AppError::BadRequest(format!("Invalid WhatsApp JID '{}': {}", normalized, e)))
+    Jid::from_str(&normalized).map_err(|e| AppError::BadRequest(format!("Invalid WhatsApp JID '{}': {}", normalized, e)))
 }
 
 pub(crate) fn parse_group_jid(jid: &str) -> Result<Jid, AppError> {
@@ -44,11 +40,7 @@ pub(crate) fn parse_group_jid(jid: &str) -> Result<Jid, AppError> {
 pub(crate) fn map_wa_error<E: std::fmt::Display>(e: E) -> AppError {
     let msg = e.to_string();
     let lower = msg.to_lowercase();
-    if lower.contains("403")
-        || lower.contains("not-authorized")
-        || lower.contains("forbidden")
-        || lower.contains("admin")
-    {
+    if lower.contains("403") || lower.contains("not-authorized") || lower.contains("forbidden") || lower.contains("admin") {
         AppError::Forbidden(msg)
     } else if lower.contains("409") || lower.contains("conflict") {
         AppError::Conflict(msg)
@@ -205,10 +197,7 @@ pub async fn list_chats(
         (status = 500, description = "Database error", body = ErrorResponse)
     )
 )]
-pub async fn get_chat(
-    State(_state): State<Arc<AppState>>,
-    Path((session_id, jid)): Path<(String, String)>,
-) -> AppResult<Json<Chat>> {
+pub async fn get_chat(State(_state): State<Arc<AppState>>, Path((session_id, jid)): Path<(String, String)>) -> AppResult<Json<Chat>> {
     let _ = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
@@ -216,10 +205,7 @@ pub async fn get_chat(
     let chat = repo::get_one(&jid, &session_id).await?;
     match chat {
         Some(c) => Ok(Json(c)),
-        None => Err(AppError::NotFound(format!(
-            "Chat '{}' not found in session '{}'",
-            jid, session_id
-        ))),
+        None => Err(AppError::NotFound(format!("Chat '{}' not found in session '{}'", jid, session_id))),
     }
 }
 
@@ -240,10 +226,7 @@ pub async fn get_chat(
         (status = 500, description = "Database error", body = ErrorResponse)
     )
 )]
-pub async fn delete_chat(
-    State(_state): State<Arc<AppState>>,
-    Path((session_id, jid)): Path<(String, String)>,
-) -> AppResult<StatusCode> {
+pub async fn delete_chat(State(_state): State<Arc<AppState>>, Path((session_id, jid)): Path<(String, String)>) -> AppResult<StatusCode> {
     let _ = repo::get_one(&jid, &session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Chat '{}' not found", jid)))?;
@@ -280,41 +263,40 @@ pub async fn mark_as_read(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let target_jid = parse_target_jid(&jid)?;
     let is_read = body.read.unwrap_or(true);
 
-    client
-        .chat_actions()
-        .mark_chat_as_read(&target_jid, is_read, None)
-        .await
-        .map_err(map_wa_error)?;
-
     if is_read {
-        if let Some(msg_ids) = &body.message_ids {
-            let id_refs: Vec<&str> = msg_ids.iter().map(String::as_str).collect();
-            let _ = client.mark_as_read(&target_jid, None, &id_refs).await;
-        }
         repo::mark_as_read(&session_id, &jid).await?;
     }
 
+    let client_clone = client.clone();
+    let target_jid_clone = target_jid.clone();
+    let msg_ids_clone = body.message_ids.clone();
+    tokio::spawn(async move {
+        if let Err(e) = client_clone
+            .chat_actions()
+            .mark_chat_as_read(&target_jid_clone, is_read, None)
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to send mark_chat_as_read stanza to WhatsApp server");
+        }
+        if is_read && let Some(msg_ids) = &msg_ids_clone {
+            let id_refs: Vec<&str> = msg_ids.iter().map(String::as_str).collect();
+            let _ = client_clone.mark_as_read(&target_jid_clone, None, &id_refs).await;
+        }
+    });
+
     Ok(Json(ChatActionResponse {
         jid,
-        status: if is_read {
-            "read".to_string()
-        } else {
-            "unread".to_string()
-        },
+        status: if is_read { "read".to_string() } else { "unread".to_string() },
     }))
 }
 
@@ -346,16 +328,12 @@ pub async fn mute_chat(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let target_jid = parse_target_jid(&jid)?;
     if body.muted {
@@ -370,30 +348,18 @@ pub async fn mute_chat(
                 repo::update_mute(&session_id, &jid, Some(end_ms / 1000)).await?;
             }
             _ => {
-                client
-                    .chat_actions()
-                    .mute_chat(&target_jid)
-                    .await
-                    .map_err(map_wa_error)?;
+                client.chat_actions().mute_chat(&target_jid).await.map_err(map_wa_error)?;
                 repo::update_mute(&session_id, &jid, Some(-1)).await?;
             }
         }
     } else {
-        client
-            .chat_actions()
-            .unmute_chat(&target_jid)
-            .await
-            .map_err(map_wa_error)?;
+        client.chat_actions().unmute_chat(&target_jid).await.map_err(map_wa_error)?;
         repo::update_mute(&session_id, &jid, None).await?;
     }
 
     Ok(Json(ChatActionResponse {
         jid,
-        status: if body.muted {
-            "muted".to_string()
-        } else {
-            "unmuted".to_string()
-        },
+        status: if body.muted { "muted".to_string() } else { "unmuted".to_string() },
     }))
 }
 
@@ -425,30 +391,18 @@ pub async fn pin_chat(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let target_jid = parse_target_jid(&jid)?;
     if body.pinned {
-        client
-            .chat_actions()
-            .pin_chat(&target_jid)
-            .await
-            .map_err(map_wa_error)?;
+        client.chat_actions().pin_chat(&target_jid).await.map_err(map_wa_error)?;
     } else {
-        client
-            .chat_actions()
-            .unpin_chat(&target_jid)
-            .await
-            .map_err(map_wa_error)?;
+        client.chat_actions().unpin_chat(&target_jid).await.map_err(map_wa_error)?;
     }
 
     repo::update_pinned(&session_id, &jid, body.pinned).await?;
@@ -491,24 +445,16 @@ pub async fn archive_chat(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let target_jid = parse_target_jid(&jid)?;
     if body.archived {
-        client
-            .chat_actions()
-            .archive_chat(&target_jid, None)
-            .await
-            .map_err(map_wa_error)?;
+        client.chat_actions().archive_chat(&target_jid, None).await.map_err(map_wa_error)?;
     } else {
         client
             .chat_actions()
@@ -558,9 +504,7 @@ pub async fn create_group(
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
     if body.subject.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "Group subject cannot be empty or whitespace only".to_string(),
-        ));
+        return Err(AppError::BadRequest("Group subject cannot be empty or whitespace only".to_string()));
     }
 
     if body.subject.chars().count() > 100 {
@@ -570,30 +514,22 @@ pub async fn create_group(
     }
 
     if body.participants.is_empty() {
-        return Err(AppError::BadRequest(
-            "Group must have at least one initial participant".to_string(),
-        ));
+        return Err(AppError::BadRequest("Group must have at least one initial participant".to_string()));
     }
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
-    let _subject_validated = GroupSubject::new(&body.subject)
-        .map_err(|e| AppError::BadRequest(format!("Invalid group subject: {}", e)))?;
+    let _subject_validated = GroupSubject::new(&body.subject).map_err(|e| AppError::BadRequest(format!("Invalid group subject: {}", e)))?;
 
     let description = match body.description.as_deref() {
-        Some(desc) if !desc.trim().is_empty() => Some(
-            GroupDescription::new(desc)
-                .map_err(|e| AppError::BadRequest(format!("Invalid group description: {}", e)))?,
-        ),
+        Some(desc) if !desc.trim().is_empty() => {
+            Some(GroupDescription::new(desc).map_err(|e| AppError::BadRequest(format!("Invalid group description: {}", e)))?)
+        }
         _ => None,
     };
 
@@ -614,11 +550,7 @@ pub async fn create_group(
         .participants(participant_opts)
         .maybe_description(description);
 
-    let create_result = client
-        .groups()
-        .create_group(builder.build())
-        .await
-        .map_err(map_wa_error)?;
+    let create_result = client.groups().create_group(builder.build()).await.map_err(map_wa_error)?;
 
     let meta = create_result.metadata;
     let group_jid_str = meta.id.to_string();
@@ -706,31 +638,20 @@ pub async fn set_subject(
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
     if body.subject.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "Group subject cannot be empty".to_string(),
-        ));
+        return Err(AppError::BadRequest("Group subject cannot be empty".to_string()));
     }
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let group_jid = parse_group_jid(&jid)?;
-    let subject = GroupSubject::new(&body.subject)
-        .map_err(|e| AppError::BadRequest(format!("Invalid group subject: {}", e)))?;
+    let subject = GroupSubject::new(&body.subject).map_err(|e| AppError::BadRequest(format!("Invalid group subject: {}", e)))?;
 
-    client
-        .groups()
-        .set_subject(&group_jid, subject)
-        .await
-        .map_err(map_wa_error)?;
+    client.groups().set_subject(&group_jid, subject).await.map_err(map_wa_error)?;
 
     let _ = repo::update_subject(&session_id, &jid, Some(&body.subject), None, None).await;
 
@@ -769,24 +690,19 @@ pub async fn set_description(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let group_jid = parse_group_jid(&jid)?;
 
     let desc_opt = match body.description.as_deref() {
-        Some(d) if !d.trim().is_empty() => Some(
-            GroupDescription::new(d)
-                .map_err(|e| AppError::BadRequest(format!("Invalid description: {}", e)))?,
-        ),
+        Some(d) if !d.trim().is_empty() => {
+            Some(GroupDescription::new(d).map_err(|e| AppError::BadRequest(format!("Invalid description: {}", e)))?)
+        }
         _ => None,
     };
 
@@ -831,25 +747,17 @@ pub async fn get_invite_link(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let group_jid = parse_group_jid(&jid)?;
     let reset = query.reset.unwrap_or(false);
 
-    let code = client
-        .groups()
-        .get_invite_link(&group_jid, reset)
-        .await
-        .map_err(map_wa_error)?;
+    let code = client.groups().get_invite_link(&group_jid, reset).await.map_err(map_wa_error)?;
 
     let invite_url = format!("https://chat.whatsapp.com/{}", code);
 
@@ -874,32 +782,21 @@ pub async fn get_invite_link(
         (status = 500, description = "Internal error", body = ErrorResponse)
     )
 )]
-pub async fn leave_group(
-    State(state): State<Arc<AppState>>,
-    Path((session_id, jid)): Path<(String, String)>,
-) -> AppResult<StatusCode> {
+pub async fn leave_group(State(state): State<Arc<AppState>>, Path((session_id, jid)): Path<(String, String)>) -> AppResult<StatusCode> {
     let _ = session_repo::get_one(&session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let group_jid = parse_group_jid(&jid)?;
 
-    client
-        .groups()
-        .leave(&group_jid)
-        .await
-        .map_err(map_wa_error)?;
+    client.groups().leave(&group_jid).await.map_err(map_wa_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -944,16 +841,12 @@ pub async fn join_group(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let raw_code = body.invite_code.trim();
     let code = if let Some(stripped) = raw_code.strip_prefix("https://chat.whatsapp.com/") {
@@ -968,11 +861,7 @@ pub async fn join_group(
         return Err(AppError::BadRequest("Invite code cannot be empty".to_string()));
     }
 
-    let join_res = client
-        .groups()
-        .join_with_invite_code(code)
-        .await
-        .map_err(map_wa_error)?;
+    let join_res = client.groups().join_with_invite_code(code).await.map_err(map_wa_error)?;
 
     let group_jid_str = join_res.group_jid().to_string();
     let status_str = match join_res {
@@ -1023,16 +912,12 @@ pub async fn set_group_announcement(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let group_jid = parse_group_jid(&jid)?;
 
@@ -1087,24 +972,16 @@ pub async fn set_group_lock(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let group_jid = parse_group_jid(&jid)?;
 
-    client
-        .groups()
-        .set_locked(&group_jid, body.locked)
-        .await
-        .map_err(map_wa_error)?;
+    client.groups().set_locked(&group_jid, body.locked).await.map_err(map_wa_error)?;
 
     Ok(Json(ChatActionResponse {
         jid,
@@ -1151,16 +1028,12 @@ pub async fn set_ephemeral_timer(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let target_jid = parse_target_jid(&jid)?;
 
@@ -1211,16 +1084,12 @@ pub async fn set_chat_state(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let target_jid = parse_target_jid(&jid)?;
 
@@ -1236,11 +1105,7 @@ pub async fn set_chat_state(
         }
     };
 
-    client
-        .chatstate()
-        .send(&target_jid, chat_state)
-        .await
-        .map_err(map_wa_error)?;
+    client.chatstate().send(&target_jid, chat_state).await.map_err(map_wa_error)?;
 
     Ok(Json(ChatActionResponse {
         jid,
@@ -1288,16 +1153,12 @@ pub async fn set_global_presence(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Session '{}' not found", session_id)))?;
 
-    let client = state
-        .sessions
-        .get_client(&session_id)
-        .await
-        .ok_or_else(|| {
-            AppError::BadRequest(format!(
-                "Session '{}' is not connected or active in memory. Scan QR first.",
-                session_id
-            ))
-        })?;
+    let client = state.sessions.get_client(&session_id).await.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "Session '{}' is not connected or active in memory. Scan QR first.",
+            session_id
+        ))
+    })?;
 
     let status = if body.available {
         whatsapp_rust::features::PresenceStatus::Available
@@ -1306,9 +1167,9 @@ pub async fn set_global_presence(
     };
 
     client.presence().set(status).await.map_err(|err| match err {
-        whatsapp_rust::features::PresenceError::PushNameEmpty => AppError::BadRequest(
-            "Cannot set presence: session push_name is empty or session is not authenticated yet.".to_string(),
-        ),
+        whatsapp_rust::features::PresenceError::PushNameEmpty => {
+            AppError::BadRequest("Cannot set presence: session push_name is empty or session is not authenticated yet.".to_string())
+        }
         other => map_wa_error(other),
     })?;
 

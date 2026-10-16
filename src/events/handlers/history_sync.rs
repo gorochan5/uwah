@@ -1,10 +1,16 @@
 use crate::models::contacts::Contact;
 use crate::models::messages::Message;
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::{error, info, warn};
+use whatsapp_rust::prelude::Client;
 use whatsapp_rust::types::events::LazyHistorySync;
 
-pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()> {
+pub async fn handle(
+    session_id: &str,
+    lazy_sync: &LazyHistorySync,
+    client: &Arc<Client>,
+) -> Result<()> {
     let sync_type = lazy_sync.sync_type();
     let chunk_order = lazy_sync.chunk_order();
     let progress = lazy_sync.progress();
@@ -20,6 +26,7 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
     let mut stream = lazy_sync.stream();
     let mut total_conversations = 0usize;
     let mut total_messages = 0usize;
+    let mut pending_downloads: Vec<(String, String, (String, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>, u64, String))> = Vec::new();
 
     while let Some(conv) = stream.next_conversation()? {
         let chat_jid = &conv.id;
@@ -147,6 +154,21 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
                 crate::events::extractor::ExtractedMessage::default()
             };
 
+            let media_download_info = extracted.media.as_ref().and_then(|m| {
+                if let (Some(direct_path), Some(media_key)) = (&m.cdn_url, &m.media_key) {
+                    Some((
+                        direct_path.clone(),
+                        media_key.clone(),
+                        m.raw_file_sha256.clone(),
+                        m.raw_file_enc_sha256.clone(),
+                        m.file_length.unwrap_or(0),
+                        extracted.message_type.clone(),
+                    ))
+                } else {
+                    None
+                }
+            });
+
             let (cdn_url, media_key, file_enc_sha256, media_sha256) = match extracted.media {
                 Some(m) => (m.cdn_url, m.media_key, m.file_enc_sha256, m.media_sha256),
                 None => (None, None, None, None),
@@ -176,6 +198,10 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
                 is_deleted: extracted.is_revoked,
                 timestamp: dt,
             });
+
+            if let Some(info) = media_download_info {
+                pending_downloads.push((msg_id.to_string(), chat_jid.to_string(), info));
+            }
         }
 
         if !conv_messages.is_empty() {
@@ -290,6 +316,61 @@ pub async fn handle(session_id: &str, lazy_sync: &LazyHistorySync) -> Result<()>
                 "Failed to decode HistorySync stream remainder"
             );
         }
+    }
+
+    // Spawn background media download and decryption tasks for historical media
+    if !pending_downloads.is_empty() {
+        let client_clone = Arc::clone(client);
+        let session_id_owned = session_id.to_string();
+        let total_downloads = pending_downloads.len();
+
+        info!(
+            session_id = %session_id,
+            total_media_items = total_downloads,
+            "Spawning background media download worker for HistorySync"
+        );
+
+        tokio::spawn(async move {
+            // Process downloads with bounded concurrency to protect network & DB
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(4));
+            let mut join_set = tokio::task::JoinSet::new();
+
+            for (msg_id, chat_jid, (direct_path, media_key, raw_file_sha256, raw_file_enc_sha256, file_length, msg_type)) in pending_downloads {
+                let client_ref = Arc::clone(&client_clone);
+                let sess_ref = session_id_owned.clone();
+                let sem = Arc::clone(&semaphore);
+
+                join_set.spawn(async move {
+                    let _permit = match sem.acquire().await {
+                        Ok(p) => p,
+                        Err(_) => return,
+                    };
+                    let _ = crate::media::downloader::download_and_cache_media(
+                        &client_ref,
+                        &sess_ref,
+                        &chat_jid,
+                        &msg_id,
+                        &direct_path,
+                        &media_key,
+                        raw_file_sha256.as_deref(),
+                        raw_file_enc_sha256.as_deref(),
+                        file_length,
+                        &msg_type,
+                    )
+                    .await;
+                });
+            }
+
+            while let Some(res) = join_set.join_next().await {
+                let _ = res;
+            }
+
+            info!(
+                session_id = %session_id_owned,
+                total_processed = total_downloads,
+                "Background HistorySync media download worker completed"
+            );
+        });
     }
 
     Ok(())

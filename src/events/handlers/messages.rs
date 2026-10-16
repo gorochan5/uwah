@@ -4,8 +4,10 @@ use anyhow::Result;
 use tracing::info;
 use whatsapp_rust::types::events::MessageBatch;
 use whatsapp_rust::types::message::EditAttribute;
+use whatsapp_rust::prelude::Client;
+use std::sync::Arc;
 
-pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
+pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>) -> Result<()> {
     let pool = crate::database::get();
     let mut tx = pool.begin().await?;
 
@@ -22,6 +24,7 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
     .await?;
 
     let mut pending_webhooks: Vec<(String, String, serde_json::Value)> = Vec::new();
+    let mut pending_downloads: Vec<(String, String, (String, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>, u64, String))> = Vec::new();
 
     for inbound in batch.iter() {
         let info = &inbound.info;
@@ -132,6 +135,21 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
         }
 
         // 5. Map media fields
+        let media_download_info = extracted.media.as_ref().and_then(|m| {
+            if let (Some(direct_path), Some(media_key)) = (&m.cdn_url, &m.media_key) {
+                Some((
+                    direct_path.clone(),
+                    media_key.clone(),
+                    m.raw_file_sha256.clone(),
+                    m.raw_file_enc_sha256.clone(),
+                    m.file_length.unwrap_or(0),
+                    extracted.message_type.clone(),
+                ))
+            } else {
+                None
+            }
+        });
+
         let (cdn_url, media_key, file_enc_sha256, media_sha256) = match extracted.media {
             Some(m) => (m.cdn_url, m.media_key, m.file_enc_sha256, m.media_sha256),
             None => (None, None, None, None),
@@ -161,6 +179,10 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
             is_deleted: is_revoked,
             timestamp,
         };
+
+        if let Some(info) = media_download_info {
+            pending_downloads.push((msg_id.clone(), chat_jid.clone(), info));
+        }
 
         // 6. Insert/Upsert message
         sqlx::query!(
@@ -310,6 +332,30 @@ pub async fn handle(session_id: &str, batch: &MessageBatch) -> Result<()> {
     // Dispatch in-process event bus and direct webhook notifications post-commit
     for (event, sid, payload) in pending_webhooks {
         crate::events::webhook::dispatch_event(&event, &sid, payload);
+    }
+
+    // Spawn background media download and decryption tasks for inbound media
+    if !pending_downloads.is_empty() {
+        let client_clone = Arc::clone(client);
+        let session_id_owned = session_id.to_string();
+
+        tokio::spawn(async move {
+            for (msg_id, chat_jid, (direct_path, media_key, raw_file_sha256, raw_file_enc_sha256, file_length, msg_type)) in pending_downloads {
+                let _ = crate::media::downloader::download_and_cache_media(
+                    &client_clone,
+                    &session_id_owned,
+                    &chat_jid,
+                    &msg_id,
+                    &direct_path,
+                    &media_key,
+                    raw_file_sha256.as_deref(),
+                    raw_file_enc_sha256.as_deref(),
+                    file_length,
+                    &msg_type,
+                )
+                .await;
+            }
+        });
     }
 
     Ok(())

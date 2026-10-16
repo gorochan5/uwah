@@ -288,15 +288,24 @@ impl ChatService for ChatServiceImpl {
 
         let target_jid = parse_target_jid(&jid)?;
 
-        client
-            .chat_actions()
-            .mark_chat_as_read(&target_jid, true, None)
-            .await
-            .map_err(map_wa_error)?;
-
+        // Update local DB immediately so UI responds in sub-millisecond time
         repo::mark_as_read(&session_id, &jid)
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
+
+        // Dispatch network stanza to WhatsApp servers asynchronously (fire-and-forget)
+        // to avoid blocking the HTTP/gRPC thread for 3-5 seconds waiting for network ACK.
+        let client_clone = client.clone();
+        let target_jid_clone = target_jid.clone();
+        tokio::spawn(async move {
+            if let Err(e) = client_clone
+                .chat_actions()
+                .mark_chat_as_read(&target_jid_clone, true, None)
+                .await
+            {
+                tracing::warn!(error = %e, "Failed to send mark_chat_as_read stanza to WhatsApp server");
+            }
+        });
 
         Ok(Response::new(ChatActionResponse {
             session_id,

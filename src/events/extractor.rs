@@ -7,6 +7,9 @@ pub struct ExtractedMedia {
     pub media_key: Option<Vec<u8>>,
     pub file_enc_sha256: Option<String>,
     pub media_sha256: Option<String>,
+    pub raw_file_sha256: Option<Vec<u8>>,
+    pub raw_file_enc_sha256: Option<Vec<u8>>,
+    pub file_length: Option<u64>,
 }
 
 pub fn extract_media<T: Downloadable>(item: &T) -> ExtractedMedia {
@@ -23,6 +26,9 @@ pub fn extract_media<T: Downloadable>(item: &T) -> ExtractedMedia {
         // writes the file to disk and registers the SHA-256 into media_cache table.
         // This strictly prevents SQLite foreign key constraint violation (787).
         media_sha256: None,
+        raw_file_sha256: item.file_sha256().map(|b| b.to_vec()),
+        raw_file_enc_sha256: item.file_enc_sha256().map(|b| b.to_vec()),
+        file_length: item.file_length(),
     }
 }
 

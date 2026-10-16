@@ -158,6 +158,46 @@ impl MessageService for MessageServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
 
+        // On-demand media hydration for active chat view:
+        // If any historical messages in this view have media credentials but have not yet been downloaded,
+        // spawn download tasks immediately so they load seamlessly.
+        if let Some(client) = self.state.sessions.get_client(&session_id).await {
+            let pending_medias: Vec<_> = messages
+                .iter()
+                .filter(|m| m.media_sha256.is_none() && m.cdn_url.is_some() && m.media_key.is_some())
+                .map(|m| {
+                    (
+                        m.id.clone(),
+                        m.chat_jid.clone(),
+                        m.cdn_url.clone().unwrap(),
+                        m.media_key.clone().unwrap(),
+                        m.message_type.clone(),
+                    )
+                })
+                .collect();
+
+            if !pending_medias.is_empty() {
+                let session_id_owned = session_id.clone();
+                tokio::spawn(async move {
+                    for (msg_id, chat, direct_path, media_key, msg_type) in pending_medias {
+                        let _ = crate::media::downloader::download_and_cache_media(
+                            &client,
+                            &session_id_owned,
+                            &chat,
+                            &msg_id,
+                            &direct_path,
+                            &media_key,
+                            None,
+                            None,
+                            0,
+                            &msg_type,
+                        )
+                        .await;
+                    }
+                });
+            }
+        }
+
         let items = messages.into_iter().map(model_to_proto).collect();
         Ok(Response::new(ListMessagesResponse { messages: items }))
     }
@@ -546,9 +586,32 @@ impl MessageService for MessageServiceImpl {
                 .unwrap_or("bin"),
             _ => "bin",
         };
-        let disk_filename = format!("{}.{}", sha256_hex, ext);
-        let disk_path = media_dir.join(&disk_filename);
-        let disk_path_str = disk_path.to_str().unwrap_or(&disk_filename).to_string();
+        let is_group = jid.ends_with("@g.us");
+        let chat_name = if is_group {
+            crate::repository::chats::get_one(&jid, &session_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|c| c.name)
+                .unwrap_or_else(|| jid.clone())
+        } else {
+            crate::repository::contacts::get_one(&jid, &session_id)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|c| c.push_name.or(c.phone_number))
+                .unwrap_or_else(|| jid.clone())
+        };
+
+        let disk_path = crate::media::storage::get_chat_media_path(
+            &self.state.config.media.dir,
+            is_group,
+            &chat_name,
+            &req.media_type,
+            &sha256_hex,
+            ext,
+        );
+        let disk_path_str = disk_path.to_string_lossy().to_string();
 
         if let Ok(Some(existing)) = crate::repository::media_cache::get_one(&sha256_hex).await
             && tokio::fs::try_exists(&existing.disk_path).await.unwrap_or(false)
@@ -560,6 +623,9 @@ impl MessageService for MessageServiceImpl {
                 "Media cache hit, skipping disk write and DB upsert"
             );
         } else {
+            if let Some(parent) = disk_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
             tokio::fs::write(&disk_path, &bytes)
                 .await
                 .map_err(|e| Status::internal(format!("Failed to persist media to disk: {}", e)))?;

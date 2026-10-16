@@ -413,6 +413,27 @@ pub async fn update_edited_message(
     Ok(())
 }
 
+pub async fn update_media_sha256(
+    id: &str,
+    session_id: &str,
+    media_sha256: &str,
+) -> Result<SqliteQueryResult> {
+    let pool = crate::database::get();
+    sqlx::query!(
+        r#"
+        UPDATE messages
+        SET media_sha256 = $1
+        WHERE id = $2 AND session_id = $3
+        "#,
+        media_sha256,
+        id,
+        session_id
+    )
+    .execute(pool)
+    .await
+    .context("Failed to update media_sha256 for message in DB")
+}
+
 pub async fn delete(id: &str, session_id: &str) -> Result<SqliteQueryResult> {
     info!(
         message_id = id,

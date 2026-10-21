@@ -160,41 +160,46 @@ impl MessageService for MessageServiceImpl {
 
         // On-demand media hydration for active chat view:
         // If any historical messages in this view have media credentials but have not yet been downloaded,
-        // spawn download tasks immediately so they load seamlessly.
+        // download them immediately so they are returned with media_sha256 populated.
+        let mut messages = messages;
         if let Some(client) = self.state.sessions.get_client(&session_id).await {
-            let pending_medias: Vec<_> = messages
+            let pending_indices: Vec<usize> = messages
                 .iter()
-                .filter(|m| m.media_sha256.is_none() && m.cdn_url.is_some() && m.media_key.is_some())
-                .map(|m| {
-                    (
-                        m.id.clone(),
-                        m.chat_jid.clone(),
-                        m.cdn_url.clone().unwrap(),
-                        m.media_key.clone().unwrap(),
-                        m.message_type.clone(),
-                    )
-                })
+                .enumerate()
+                .filter(|(_, m)| m.media_sha256.is_none() && m.cdn_url.is_some() && m.media_key.is_some())
+                .map(|(idx, _)| idx)
                 .collect();
 
-            if !pending_medias.is_empty() {
-                let session_id_owned = session_id.clone();
-                tokio::spawn(async move {
-                    for (msg_id, chat, direct_path, media_key, msg_type) in pending_medias {
-                        let _ = crate::media::downloader::download_and_cache_media(
-                            &client,
-                            &session_id_owned,
-                            &chat,
+            if !pending_indices.is_empty() {
+                for idx in pending_indices {
+                    let m = &messages[idx];
+                    let direct_path = m.cdn_url.clone().unwrap();
+                    let media_key = m.media_key.clone().unwrap();
+                    let enc_bytes = m.file_enc_sha256.as_deref().and_then(|h| hex::decode(h).ok());
+                    let msg_id = m.id.clone();
+                    let chat_jid = m.chat_jid.clone();
+                    let msg_type = m.message_type.clone();
+                    let client_ref = client.clone();
+                    let sess_id = session_id.clone();
+
+                    if let Ok(Ok((sha, _))) = tokio::time::timeout(
+                        std::time::Duration::from_millis(1500),
+                        crate::media::downloader::download_and_cache_media(
+                            &client_ref,
+                            &sess_id,
+                            &chat_jid,
                             &msg_id,
                             &direct_path,
                             &media_key,
                             None,
-                            None,
+                            enc_bytes.as_deref(),
                             0,
                             &msg_type,
-                        )
-                        .await;
+                        ),
+                    ).await {
+                        messages[idx].media_sha256 = Some(sha);
                     }
-                });
+                }
             }
         }
 

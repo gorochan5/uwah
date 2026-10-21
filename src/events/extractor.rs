@@ -120,7 +120,7 @@ pub fn extract_message_content(raw_msg: &wa::Message) -> ExtractedMessage {
             is_edited: false,
             is_revoked: false,
         }
-    } else if let Some(vid) = msg.video_message.as_option() {
+    } else if let Some(vid) = msg.video_message.as_option().or_else(|| msg.ptv_message.as_option()) {
         let quoted_id = vid
             .context_info
             .as_option()
@@ -172,6 +172,20 @@ pub fn extract_message_content(raw_msg: &wa::Message) -> ExtractedMessage {
             message_type: "sticker".to_string(),
             body: None,
             media: Some(extract_media(stk)),
+            quoted_message_id: quoted_id,
+            edit_target_id: None,
+            is_edited: false,
+            is_revoked: false,
+        }
+    } else if let Some(pack) = msg.sticker_pack_message.as_option() {
+        let quoted_id = pack
+            .context_info
+            .as_option()
+            .and_then(|c| c.stanza_id.clone());
+        ExtractedMessage {
+            message_type: "sticker_pack".to_string(),
+            body: pack.name.clone().or_else(|| pack.caption.clone()),
+            media: Some(extract_media(pack)),
             quoted_message_id: quoted_id,
             edit_target_id: None,
             is_edited: false,

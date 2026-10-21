@@ -49,6 +49,9 @@ pub struct Media {
     /// Maximum allowed file upload/stream size in bytes (default: 100MB)
     #[serde(default = "default_max_file_size")]
     pub max_file_size: Option<u64>,
+    /// Maximum concurrent media downloads from WhatsApp CDN (default: 3)
+    #[serde(default = "default_max_concurrent_downloads")]
+    pub max_concurrent_downloads: Option<usize>,
 }
 
 fn default_cache_ttl() -> Option<u64> {
@@ -57,6 +60,10 @@ fn default_cache_ttl() -> Option<u64> {
 
 fn default_max_file_size() -> Option<u64> {
     Some(100 * 1024 * 1024) // 100 MB
+}
+
+fn default_max_concurrent_downloads() -> Option<usize> {
+    Some(3)
 }
 
 impl Media {
@@ -69,6 +76,9 @@ impl Media {
         }
         if let Some(0) = self.max_file_size {
             return Err("The 'max_file_size' in [media] must be greater than 0.".to_string());
+        }
+        if let Some(0) = self.max_concurrent_downloads {
+            return Err("The 'max_concurrent_downloads' in [media] must be greater than 0.".to_string());
         }
         Ok(())
     }
@@ -227,6 +237,10 @@ pub fn get() -> &'static Config {
     CONFIG
         .get()
         .expect("config::init() must be called before config::get()")
+}
+
+pub fn try_get() -> Option<&'static Config> {
+    CONFIG.get()
 }
 
 pub fn init() -> anyhow::Result<()> {

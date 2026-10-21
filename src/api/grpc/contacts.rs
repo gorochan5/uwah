@@ -56,7 +56,7 @@ impl ContactService for ContactServiceImpl {
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?
             .ok_or_else(|| Status::not_found(format!("Session '{}' not found", session_id)))?;
 
-        let limit = req.limit.filter(|&l| l > 0).map(|l| l.clamp(1, 100));
+        let limit = req.limit.filter(|&l| l > 0).map(|l| l.clamp(1, 5000));
         let offset = req.offset.filter(|&o| o > 0);
         let contacts = repo::get_by_session_paginated(&session_id, limit, offset, None)
             .await

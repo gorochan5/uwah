@@ -62,24 +62,29 @@ pub async fn handle(
             && !chat_jid.ends_with("@newsletter");
 
         if is_direct_contact {
-            let phone = if chat_jid.ends_with("@s.whatsapp.net") {
-                chat_jid.split('@').next()
-            } else {
-                None
-            };
-            let lid = if chat_jid.ends_with("@lid") {
-                Some(chat_jid.as_str())
-            } else {
-                None
-            };
-            let contact_name = conv.name.as_deref().filter(|s| !s.trim().is_empty());
+            let mut pn_str = conv.pn_jid.clone();
+            let mut lid_str = conv.lid_jid.clone();
+
+            if chat_jid.ends_with("@s.whatsapp.net") && pn_str.is_none() {
+                pn_str = Some(chat_jid.to_string());
+            }
+            if chat_jid.ends_with("@lid") && lid_str.is_none() {
+                lid_str = Some(chat_jid.to_string());
+            }
+
+            if let (Some(pn), Some(lid)) = (&pn_str, &lid_str) {
+                let _ = crate::repository::contacts::link_lid_to_pn(session_id, pn, lid).await;
+            }
+
+            let phone = pn_str.as_deref().and_then(|p| p.split('@').next());
+            let contact_name = conv.name.as_deref().or(conv.display_name.as_deref()).filter(|s| !s.trim().is_empty());
 
             if let Err(err) = crate::repository::contacts::ensure_exists(
                 session_id,
                 chat_jid,
                 phone,
                 contact_name,
-                lid,
+                lid_str.as_deref(),
             )
             .await
             {
@@ -143,6 +148,13 @@ pub async fn handle(
             } else {
                 key.participant.as_deref().unwrap_or(chat_jid)
             };
+
+            if !is_from_me && let Some(pushname) = web_msg.push_name.as_deref().filter(|s| !s.trim().is_empty()) {
+                let is_lid = sender_jid.ends_with("@lid");
+                let phone = if is_lid { None } else { sender_jid.split('@').next() };
+                let lid = if is_lid { Some(sender_jid) } else { None };
+                let _ = crate::repository::contacts::ensure_exists(session_id, sender_jid, phone, Some(pushname), lid).await;
+            }
 
             let ts_secs = web_msg.message_timestamp.unwrap_or(0);
             let dt = chrono::DateTime::from_timestamp(ts_secs as i64, 0)
@@ -270,11 +282,17 @@ pub async fn handle(
                         continue;
                     }
 
-                    let phone = jid.split('@').next().map(str::to_string);
+                    let is_lid = jid.ends_with("@lid");
+                    let (phone, lid) = if is_lid {
+                        (None, Some(jid.to_string()))
+                    } else {
+                        (jid.split('@').next().map(str::to_string), None)
+                    };
+
                     let contact = Contact {
                         session_id: session_id.to_string(),
                         jid: jid.to_string(),
-                        lid_jid: None,
+                        lid_jid: lid,
                         phone_number: phone,
                         push_name: pushname.pushname.clone(),
                         status_text: None,

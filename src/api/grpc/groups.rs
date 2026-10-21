@@ -242,7 +242,11 @@ impl GroupParticipantService for GroupParticipantServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
 
-        if participants.is_empty()
+        // Enrich or fetch participants if list is empty or if any participant is an unlinked @lid
+        let needs_fetch = participants.is_empty()
+            || participants.iter().any(|p| p.user_jid.ends_with("@lid"));
+
+        if needs_fetch
             && let Some(client) = self.state.sessions.get_client(&session_id).await
             && let Ok(parsed_group_jid) = parse_group_jid(&group_jid)
             && let Ok(metadata) = client.groups().get_metadata(&parsed_group_jid).await
@@ -257,15 +261,72 @@ impl GroupParticipantService for GroupParticipantServiceImpl {
                 } else {
                     "member"
                 };
+                let raw_jid = p.jid.to_string();
                 let gp = crate::models::group_participants::GroupParticipant {
                     session_id: session_id.clone(),
                     group_jid: group_jid.clone(),
-                    user_jid: p.jid.to_string(),
+                    user_jid: raw_jid.clone(),
                     role: role.to_string(),
                     joined_at: now,
                 };
                 let _ = gp_repo::upsert(&gp).await;
                 fresh_list.push(gp);
+
+                // Enrich contact information with phone_number, lid, and display_name
+                let pn_opt = p
+                    .phone_number
+                    .as_ref()
+                    .map(|j| j.to_string())
+                    .or_else(|| if raw_jid.ends_with("@s.whatsapp.net") { Some(raw_jid.clone()) } else { None });
+
+                let pn_jid = match pn_opt {
+                    Some(pn) => Some(pn),
+                    None if p.jid.is_lid() => {
+                        client.get_lid_pn_entry(&p.jid).await.ok().flatten().map(|e| e.phone_number.to_string())
+                    }
+                    None => None,
+                };
+
+                let lid_opt = p
+                    .lid
+                    .as_ref()
+                    .map(|j| j.to_string())
+                    .or_else(|| if raw_jid.ends_with("@lid") { Some(raw_jid.clone()) } else { None });
+
+                let display_name = p
+                    .details
+                    .as_ref()
+                    .and_then(|d| d.display_name.as_deref())
+                    .filter(|s| !s.trim().is_empty());
+
+                if let (Some(pn), Some(lid)) = (&pn_jid, &lid_opt) {
+                    let _ = crate::repository::contacts::link_lid_to_pn(&session_id, pn, lid).await;
+                    if let Some(name) = display_name {
+                        let phone = pn.split('@').next();
+                        let _ = crate::repository::contacts::ensure_exists(
+                            &session_id,
+                            pn,
+                            phone,
+                            Some(name),
+                            Some(lid),
+                        )
+                        .await;
+                    }
+                } else if let Some(name) = display_name {
+                    let phone = if raw_jid.ends_with("@s.whatsapp.net") {
+                        raw_jid.split('@').next()
+                    } else {
+                        None
+                    };
+                    let _ = crate::repository::contacts::ensure_exists(
+                        &session_id,
+                        &raw_jid,
+                        phone,
+                        Some(name),
+                        lid_opt.as_deref(),
+                    )
+                    .await;
+                }
             }
             if !fresh_list.is_empty() {
                 participants = fresh_list;

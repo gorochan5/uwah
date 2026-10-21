@@ -274,7 +274,7 @@ impl ChatService for ChatServiceImpl {
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?
             .ok_or_else(|| Status::not_found(format!("Session '{}' not found", session_id)))?;
 
-        let client = self
+        let _client = self
             .state
             .sessions
             .get_client(&session_id)
@@ -286,26 +286,17 @@ impl ChatService for ChatServiceImpl {
                 ))
             })?;
 
-        let target_jid = parse_target_jid(&jid)?;
+        let _target_jid = parse_target_jid(&jid)?;
 
         // Update local DB immediately so UI responds in sub-millisecond time
         repo::mark_as_read(&session_id, &jid)
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
 
-        // Dispatch network stanza to WhatsApp servers asynchronously (fire-and-forget)
-        // to avoid blocking the HTTP/gRPC thread for 3-5 seconds waiting for network ACK.
-        let client_clone = client.clone();
-        let target_jid_clone = target_jid.clone();
-        tokio::spawn(async move {
-            if let Err(e) = client_clone
-                .chat_actions()
-                .mark_chat_as_read(&target_jid_clone, true, None)
-                .await
-            {
-                tracing::warn!(error = %e, "Failed to send mark_chat_as_read stanza to WhatsApp server");
-            }
-        });
+        // Local DB unread count is updated immediately above.
+        // WhatsApp Web syncd app-state patch for regular_low fails with snapshot MAC divergence
+        // on historic accounts, triggering 5 repeated CDN snapshot downloads and HTTP 429 rate-limits.
+        // We skip chat_actions().mark_chat_as_read to protect WhatsApp CDN quotas and prevent log spam.
 
         Ok(Response::new(ChatActionResponse {
             session_id,

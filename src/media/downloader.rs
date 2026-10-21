@@ -1,8 +1,19 @@
 use std::sync::Arc;
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{info, warn};
 use whatsapp_rust::prelude::Client;
+
+static GLOBAL_DOWNLOAD_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+
+fn get_download_semaphore() -> &'static tokio::sync::Semaphore {
+    GLOBAL_DOWNLOAD_SEMAPHORE.get_or_init(|| {
+        let permits = crate::config::try_get()
+            .and_then(|c| c.media.max_concurrent_downloads)
+            .unwrap_or(3);
+        tokio::sync::Semaphore::new(permits)
+    })
+}
 
 /// Performs download, decryption, disk persistence and cache registration of a WhatsApp media.
 /// Returns the resulting sha256 hex string and disk path if successful.
@@ -24,6 +35,7 @@ pub async fn download_and_cache_media(
         "audio" => whatsapp_rust::download::MediaType::Audio,
         "document" => whatsapp_rust::download::MediaType::Document,
         "sticker" => whatsapp_rust::download::MediaType::Sticker,
+        "sticker_pack" => whatsapp_rust::download::MediaType::StickerPack,
         _ => whatsapp_rust::download::MediaType::Image,
     };
 
@@ -39,10 +51,36 @@ pub async fn download_and_cache_media(
         media_type_enum,
     );
 
-    let bytes = client
-        .download(&params)
-        .await
-        .map_err(|e| anyhow::anyhow!("WhatsApp CDN download failed: {}", e))?;
+    let _permit = get_download_semaphore().acquire().await;
+
+    let download_res = client.download(&params).await;
+    let bytes = match download_res {
+        Ok(b) => b,
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("429") || err_str.contains("rate-overlimit") {
+                warn!(
+                    msg_id = %msg_id,
+                    "WhatsApp CDN rate-limit (429) hit, retrying after backoff..."
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                client
+                    .download(&params)
+                    .await
+                    .map_err(|e2| {
+                        warn!(msg_id = %msg_id, error = %e2, "Retry after 429 also failed");
+                        anyhow::anyhow!("WhatsApp CDN download failed: {}", e2)
+                    })?
+            } else {
+                warn!(
+                    msg_id = %msg_id,
+                    error = %e,
+                    "WhatsApp CDN download failed"
+                );
+                return Err(anyhow::anyhow!("WhatsApp CDN download failed: {}", e));
+            }
+        }
+    };
 
     let sha256_hex = hex::encode(Sha256::digest(&bytes));
 
@@ -63,14 +101,31 @@ pub async fn download_and_cache_media(
             .unwrap_or_else(|| chat_jid.to_string())
     };
 
-    let (mime_type, ext) = match msg_type {
+    let (mut mime_type, mut ext) = match msg_type {
         "image" => ("image/jpeg", "jpg"),
         "video" => ("video/mp4", "mp4"),
         "audio" => ("audio/ogg", "ogg"),
         "sticker" => ("image/webp", "webp"),
+        "sticker_pack" => ("application/zip", "zip"),
         "document" => ("application/octet-stream", "bin"),
         _ => ("application/octet-stream", "bin"),
     };
+
+    if msg_type == "document" || mime_type == "application/octet-stream" {
+        if bytes.starts_with(b"%PDF") {
+            mime_type = "application/pdf";
+            ext = "pdf";
+        } else if bytes.starts_with(b"\xFF\xD8\xFF") {
+            mime_type = "image/jpeg";
+            ext = "jpg";
+        } else if bytes.starts_with(b"\x89PNG") {
+            mime_type = "image/png";
+            ext = "png";
+        } else if bytes.starts_with(b"PK\x03\x04") {
+            mime_type = "application/zip";
+            ext = "zip";
+        }
+    }
 
     let media_dir = crate::config::get().media.dir.clone();
     let file_path = crate::media::storage::get_chat_media_path(

@@ -141,6 +141,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(messages::send_sticker),
         )
         .route(
+            "/sessions/{id}/chats/{jid}/messages/sticker-pack",
+            post(messages::send_sticker_pack),
+        )
+        .route(
             "/sessions/{id}/chats/{jid}/messages/{msg_id}",
             patch(messages::edit_message).delete(messages::delete_message),
         )
@@ -221,6 +225,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(view_routes)
         .merge(protected_routes)
         .merge(protected_swagger)
+        .layer(axum::extract::DefaultBodyLimit::max(150 * 1024 * 1024))
         .layer(middleware::from_fn(rest_access_log_middleware))
         .with_state(state)
 }

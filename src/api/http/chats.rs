@@ -277,22 +277,15 @@ pub async fn mark_as_read(
         repo::mark_as_read(&session_id, &jid).await?;
     }
 
-    let client_clone = client.clone();
-    let target_jid_clone = target_jid.clone();
-    let msg_ids_clone = body.message_ids.clone();
-    tokio::spawn(async move {
-        if let Err(e) = client_clone
-            .chat_actions()
-            .mark_chat_as_read(&target_jid_clone, is_read, None)
-            .await
-        {
-            tracing::warn!(error = %e, "Failed to send mark_chat_as_read stanza to WhatsApp server");
-        }
-        if is_read && let Some(msg_ids) = &msg_ids_clone {
-            let id_refs: Vec<&str> = msg_ids.iter().map(String::as_str).collect();
-            let _ = client_clone.mark_as_read(&target_jid_clone, None, &id_refs).await;
-        }
-    });
+    if is_read && let Some(msg_ids) = &body.message_ids {
+        let client_clone = client.clone();
+        let target_jid_clone = target_jid.clone();
+        let id_refs: Vec<String> = msg_ids.clone();
+        tokio::spawn(async move {
+            let refs: Vec<&str> = id_refs.iter().map(String::as_str).collect();
+            let _ = client_clone.mark_as_read(&target_jid_clone, None, &refs).await;
+        });
+    }
 
     Ok(Json(ChatActionResponse {
         jid,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::api::grpc::chats::{map_wa_error, parse_target_jid};
@@ -51,7 +51,7 @@ impl ContactService for ContactServiceImpl {
         let req = request.into_inner();
         let session_id = req.session_id;
 
-        let _ = session_repo::get_one(&session_id)
+        let session = session_repo::get_one(&session_id)
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?
             .ok_or_else(|| Status::not_found(format!("Session '{}' not found", session_id)))?;
@@ -62,7 +62,26 @@ impl ContactService for ContactServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("Database error: {}", e)))?;
 
-        let items = contacts.into_iter().map(model_to_proto).collect();
+        let sess_phone = session.phone_number.as_deref().unwrap_or("");
+        let sess_name = session.push_name.as_deref().unwrap_or("");
+        let items = contacts
+            .into_iter()
+            .map(|mut c| {
+                if c.jid.ends_with("@lid") {
+                    if let Some(ref pn) = c.phone_number {
+                        if !sess_phone.is_empty() && (pn == sess_phone || sess_phone.contains(pn) || pn.contains(sess_phone)) {
+                            c.phone_number = None;
+                        }
+                    }
+                    if let Some(ref p_name) = c.push_name {
+                        if !sess_name.is_empty() && p_name.eq_ignore_ascii_case(sess_name) {
+                            c.push_name = None;
+                        }
+                    }
+                }
+                model_to_proto(c)
+            })
+            .collect();
         Ok(Response::new(ListContactsResponse { contacts: items }))
     }
 

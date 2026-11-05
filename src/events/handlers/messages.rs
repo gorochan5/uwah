@@ -282,16 +282,16 @@ pub async fn handle(session_id: &str, batch: &MessageBatch, client: &Arc<Client>
 
         if let Some(target) = eligible_target {
             let target_str = target.to_string();
-            let push_name = if info.push_name.trim().is_empty() {
+            let push_name = if is_from_me || info.push_name.trim().is_empty() {
                 None
             } else {
                 Some(info.push_name.as_str())
             };
 
-            let alt_jid_str = info.source.sender_alt.as_ref().map(ToString::to_string);
+            let alt_jid_str = if is_from_me { None } else { info.source.sender_alt.as_ref().map(ToString::to_string) };
             let (phone, lid) = if target.server == whatsapp_rust::Server::Lid {
                 (
-                    info.source.sender_alt.as_ref().map(|j| j.user.as_str()),
+                    ({ let p = if is_from_me { None } else { info.source.sender_alt.as_ref().map(|j| j.user.as_str()) }; p }),
                     Some(target_str.as_str()),
                 )
             } else {

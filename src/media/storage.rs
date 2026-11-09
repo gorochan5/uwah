@@ -60,3 +60,30 @@ pub fn get_chat_media_path(
         .join(format!("{}.{}", sha256, ext))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{get_chat_media_path, get_profile_picture_path, sanitize_name};
+    use std::path::Path;
+
+    #[test]
+    fn sanitize_name_replaces_invalid_and_control_characters() {
+        assert_eq!(sanitize_name("team/name?\n"), "team_name__");
+    }
+
+    #[test]
+    fn sanitize_name_trims_surrounding_space_and_dots() {
+        assert_eq!(sanitize_name("  ..photo..  "), "photo");
+        assert_eq!(sanitize_name("..."), "unknown");
+        assert_eq!(sanitize_name(" \t "), "unknown");
+    }
+
+    #[test]
+    fn generated_paths_use_sanitized_components_and_expected_category() {
+        let profile = get_profile_picture_path("media", true, "../Group/Name", "abc");
+        assert_eq!(profile, Path::new("media/profile_pictures/groups/.._Group_Name/abc.jpg"));
+
+        let chat = get_chat_media_path("media", false, "Alice", "image/raw", "def", "webp");
+        assert_eq!(chat, Path::new("media/chats/direct/Alice/image_raw/def.webp"));
+    }
+}
+

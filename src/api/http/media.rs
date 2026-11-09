@@ -88,6 +88,42 @@ impl HttpRange {
     }
 }
 
+#[cfg(test)]
+mod range_tests {
+    use super::HttpRange;
+
+    #[test]
+    fn parses_supported_byte_range_forms() {
+        assert_eq!(HttpRange::parse("bytes=2-5"), Some(HttpRange::FromTo(2, 5)));
+        assert_eq!(HttpRange::parse("bytes=7-"), Some(HttpRange::From(7)));
+        assert_eq!(HttpRange::parse("bytes=-4"), Some(HttpRange::Suffix(4)));
+        assert_eq!(HttpRange::parse(" bytes= 2 - 5 "), Some(HttpRange::FromTo(2, 5)));
+    }
+
+    #[test]
+    fn rejects_malformed_and_reversed_ranges() {
+        for value in ["", "items=0-1", "bytes=", "bytes=1", "bytes=5-2", "bytes=-", "bytes=0-1,3-4", "bytes=x-y"] {
+            assert_eq!(HttpRange::parse(value), None, "accepted {value:?}");
+        }
+    }
+
+    #[test]
+    fn resolves_ranges_against_file_size() {
+        assert_eq!(HttpRange::FromTo(2, 8).satisfy(6), Some((2, 4, 5)));
+        assert_eq!(HttpRange::From(4).satisfy(6), Some((4, 2, 5)));
+        assert_eq!(HttpRange::Suffix(3).satisfy(6), Some((3, 3, 5)));
+        assert_eq!(HttpRange::Suffix(20).satisfy(6), Some((0, 6, 5)));
+    }
+
+    #[test]
+    fn rejects_unsatisfiable_ranges() {
+        assert_eq!(HttpRange::FromTo(6, 8).satisfy(6), None);
+        assert_eq!(HttpRange::From(6).satisfy(6), None);
+        assert_eq!(HttpRange::Suffix(0).satisfy(6), None);
+        assert_eq!(HttpRange::Suffix(2).satisfy(0), None);
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct UploadMediaResponse {
     pub sha256: String,

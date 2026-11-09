@@ -15,6 +15,9 @@ pub mod sessions;
 pub mod state;
 pub mod ws;
 
+#[cfg(test)]
+mod integration_tests;
+
 use crate::api::http::{openapi::ApiDoc, state::AppState};
 use axum::{
     Router, middleware,

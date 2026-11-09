@@ -42,3 +42,6 @@ whatsapp-rust = "0.7.0"
 
 [build-dependencies]
 tonic-prost-build = "0.14"
+
+[dev-dependencies]
+tempfile = "3.27.0"

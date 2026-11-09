@@ -404,3 +404,55 @@ fn render_unauthorized_page(session_id: &str) -> Markup {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{render_connected_card, render_qr_frame_content, render_qr_svg, scan_page_template};
+    use crate::models::sessions::Session;
+
+    fn session(status: &str, qr_payload: Option<&str>) -> Session {
+        let now = chrono::Utc::now();
+        Session {
+            id: "session-1".into(),
+            phone_number: None,
+            push_name: None,
+            status: status.into(),
+            qr_payload: qr_payload.map(str::to_owned),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn renders_valid_svg_for_qr_payload() {
+        let svg = render_qr_svg("pairing-payload").unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("#0f172a"));
+    }
+
+    #[test]
+    fn qr_frame_selects_payload_waiting_and_status_views() {
+        let qr = render_qr_frame_content(&session("QRCODE", Some("payload")), "").into_string();
+        assert!(qr.contains("<svg"));
+
+        let waiting = render_qr_frame_content(&session("QRCODE", None), "").into_string();
+        assert!(waiting.contains("Generating WhatsApp pairing key"));
+
+        let status = render_qr_frame_content(&session("STARTING", None), "").into_string();
+        assert!(status.contains("STARTING"));
+    }
+
+    #[test]
+    fn connected_card_and_page_include_session_details() {
+        let mut connected = session("CONNECTED", None);
+        connected.phone_number = Some("+5511999999999".into());
+        connected.push_name = Some("Alice".into());
+        let card = render_connected_card(&connected).into_string();
+        assert!(card.contains("+5511999999999"));
+        assert!(card.contains("Alice"));
+
+        let page = scan_page_template(&connected, Some("token-123")).into_string();
+        assert!(page.contains("session-1"));
+        assert!(page.contains("?token=token-123"));
+    }
+}

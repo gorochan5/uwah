@@ -86,7 +86,7 @@ pub fn start_outbox_daemon(cancel_token: CancellationToken) -> tokio::task::Join
         }
 
         info!("Webhook Outbox Dispatcher Daemon stopped.");
-    });
+    })
 }
 
 async fn dispatch_outbox_event(event: OutboxEvent, url: &str, secret: Option<&str>) {

@@ -330,3 +330,40 @@ pub fn extract_message_content(raw_msg: &wa::Message) -> ExtractedMessage {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_message_content, unwrap_base_message};
+    use whatsapp_rust::waproto::whatsapp as wa;
+    use whatsapp_rust::prelude::MessageField;
+
+    #[test]
+    fn extracts_conversation_text() {
+        let raw = wa::Message { conversation: Some("hello".into()), ..Default::default() };
+        let extracted = extract_message_content(&raw);
+        assert_eq!(extracted.message_type, "text");
+        assert_eq!(extracted.body.as_deref(), Some("hello"));
+        assert!(extracted.media.is_none());
+    }
+
+    #[test]
+    fn unwraps_ephemeral_message() {
+        let inner = wa::Message { conversation: Some("wrapped".into()), ..Default::default() };
+        let raw = wa::Message {
+            ephemeral_message: MessageField::some(wa::message::FutureProofMessage {
+                message: MessageField::some(inner),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(unwrap_base_message(&raw).conversation.as_deref(), Some("wrapped"));
+        assert_eq!(extract_message_content(&raw).body.as_deref(), Some("wrapped"));
+    }
+
+    #[test]
+    fn unknown_message_has_empty_fallback() {
+        let extracted = extract_message_content(&wa::Message::default());
+        assert_eq!(extracted.message_type, "other");
+        assert!(extracted.body.is_none());
+        assert!(extracted.media.is_none());
+    }
+}

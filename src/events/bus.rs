@@ -77,3 +77,37 @@ pub fn publish(
 pub fn global() -> &'static GatewayEventBus {
     &GLOBAL_BUS
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GatewayEventBus;
+
+    #[tokio::test]
+    async fn publish_delivers_event_fields_and_increasing_sequence() {
+        let bus = GatewayEventBus::new(8);
+        let mut receiver = bus.subscribe();
+
+        bus.publish("session-a", "message", serde_json::json!({"text": "hello"}));
+        let first = receiver.recv().await.unwrap();
+        bus.publish("session-b", "receipt", serde_json::json!({"id": 3}));
+        let second = receiver.recv().await.unwrap();
+
+        assert_eq!(first.seq, 1);
+        assert_eq!(first.session_id, "session-a");
+        assert_eq!(first.event_type, "message");
+        assert_eq!(first.payload, serde_json::json!({"text": "hello"}));
+        assert!(first.timestamp > 0);
+        assert_eq!(second.seq, 2);
+        assert_eq!(second.session_id, "session-b");
+    }
+
+    #[tokio::test]
+    async fn cloned_bus_shares_sequence_and_events() {
+        let bus = GatewayEventBus::new(8);
+        let clone = bus.clone();
+        let mut receiver = bus.subscribe();
+
+        clone.publish("s", "event", serde_json::Value::Null);
+        assert_eq!(receiver.recv().await.unwrap().seq, 1);
+    }
+}

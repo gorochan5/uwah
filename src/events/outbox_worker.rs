@@ -15,12 +15,25 @@ static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::
         .expect("Failed to initialize outbox reqwest client")
 });
 
-pub fn start_outbox_daemon(cancel_token: CancellationToken) {
+pub fn start_outbox_daemon(cancel_token: CancellationToken) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         info!("Starting Supervised Webhook Outbox Dispatcher Daemon");
         let semaphore = Arc::new(Semaphore::new(20));
+        let mut dispatches = tokio::task::JoinSet::new();
 
         while !cancel_token.is_cancelled() {
+            while dispatches.try_join_next().is_some() {}
+            if dispatches.len() >= 20 {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    result = dispatches.join_next() => {
+                        if let Some(Err(err)) = result {
+                            warn!(error = %err, "Outbox dispatch task failed");
+                        }
+                    }
+                }
+                continue;
+            }
             let config = crate::config::get();
             let webhook_cfg = match &config.webhook {
                 Some(w) if w.enabled => w,
@@ -47,7 +60,7 @@ pub fn start_outbox_daemon(cancel_token: CancellationToken) {
                         let target_url = url.clone();
                         let sec = secret.clone();
 
-                        tokio::spawn(async move {
+                        dispatches.spawn(async move {
                             let _permit = match sem.acquire().await {
                                 Ok(p) => p,
                                 Err(_) => return,
@@ -63,6 +76,12 @@ pub fn start_outbox_daemon(cancel_token: CancellationToken) {
                     error!(error = %err, "Failed to poll outbox events from DB");
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
+            }
+        }
+
+        while let Some(result) = dispatches.join_next().await {
+            if let Err(err) = result {
+                warn!(error = %err, "Outbox dispatch task failed");
             }
         }
 

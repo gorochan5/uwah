@@ -168,7 +168,7 @@ All API endpoints (except public health probes `/health*`, `/metrics`, and the v
 
 ## 5. gRPC Microservices Interconnect API
 
-The gateway provides a high-throughput, 100% feature-complete gRPC microservices API on `service.port + 1` (default: `6768`).
+The gateway also provides a gRPC API on `service.port + 1` (default: `6768`). Its surface overlaps with REST, but feature support is not guaranteed to match one-to-one. See [the gRPC reference](GRPC.md) for the available services and methods.
 
 For the comprehensive gRPC reference guide, error mappings, proto schemas, and `grpcurl` examples, see **[`docs/GRPC.md`](GRPC.md)**.
 

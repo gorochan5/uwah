@@ -43,13 +43,13 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // 2. Supervised Webhook Outbox Dispatcher Daemon (Track 4.2)
     let outbox_cancel = tokio_util::sync::CancellationToken::new();
-    crate::events::outbox_worker::start_outbox_daemon(outbox_cancel.clone());
+    let outbox_handle = crate::events::outbox_worker::start_outbox_daemon(outbox_cancel.clone());
 
     // 3. Background Database Maintenance Daemon (Track 3.6)
     let maint_pool = pool.clone();
     let maint_cancel = tokio_util::sync::CancellationToken::new();
     let maint_cancel_child = maint_cancel.clone();
-    tokio::spawn(async move {
+    let maint_handle = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1800)); // Every 30 mins
         loop {
             tokio::select! {
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let grpc_state = state.clone();
     let grpc_port = config.service.port + 1;
     let grpc_addr: std::net::SocketAddr = format!("{}:{}", host, grpc_port).parse()?;
-    tokio::spawn(async move {
+    let grpc_handle = tokio::spawn(async move {
         if let Err(e) = crate::api::grpc::start_grpc_server(grpc_state, grpc_addr, grpc_cancel_child).await {
             tracing::error!("gRPC server error: {}", e);
         }
@@ -95,14 +95,11 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     grpc_cancel.cancel();
     outbox_cancel.cancel();
     maint_cancel.cancel();
+    let _ = tokio::join!(outbox_handle, maint_handle, grpc_handle);
 
     // Disconnect and terminate all active WhatsApp sessions
-    if let Ok(sessions) = crate::repository::sessions::get_all().await {
-        for s in sessions {
-            if session_manager.is_running(&s.id).await {
-                session_manager.stop_session(&s.id).await;
-            }
-        }
+    for session_id in session_manager.list_active_ids().await {
+        session_manager.stop_session(&session_id).await;
     }
 
     info!("Closing database connection pool...");
@@ -115,6 +112,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 async fn auto_boot_sessions(
     session_manager: Arc<crate::api::session_manager::SessionManager>,
 ) {
+    let mut tasks = tokio::task::JoinSet::new();
     info!("Checking database for CONNECTED sessions to auto-hydrate...");
     match crate::repository::sessions::get_all().await {
         Ok(sessions) => {
@@ -138,7 +136,7 @@ async fn auto_boot_sessions(
                 let sem = Arc::clone(&semaphore);
                 let mgr = Arc::clone(&session_manager);
                 let sid = session.id.clone();
-                tokio::spawn(async move {
+                tasks.spawn(async move {
                     let _permit = match sem.acquire().await {
                         Ok(p) => p,
                         Err(_) => return,
@@ -148,6 +146,11 @@ async fn auto_boot_sessions(
                         tracing::warn!(session_id = %sid, error = %e, "Auto-boot handshake failed");
                     }
                 });
+            }
+            while let Some(result) = tasks.join_next().await {
+                if let Err(err) = result {
+                    tracing::warn!(error = %err, "Auto-boot task failed");
+                }
             }
         }
         Err(err) => {

@@ -13,6 +13,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tracing::debug;
+use tokio_util::sync::CancellationToken;
 
 pub async fn ws_global(
     ws: WebSocketUpgrade,
@@ -38,9 +39,19 @@ pub async fn ws_session(
 async fn handle_ws(socket: WebSocket, state: Arc<AppState>, session_filter: Option<String>) {
     let (mut sender, mut receiver) = socket.split();
     let mut rx = state.event_bus.subscribe();
+    let cancel = CancellationToken::new();
+    let send_cancel = cancel.clone();
+    let recv_cancel = cancel.clone();
 
     let send_task = tokio::spawn(async move {
-        while let Ok(event) = rx.recv().await {
+        loop {
+            let event = tokio::select! {
+                _ = send_cancel.cancelled() => break,
+                event = rx.recv() => match event {
+                    Ok(event) => event,
+                    Err(_) => break,
+                }
+            };
             if let Some(ref filter) = session_filter
                 && &event.session_id != filter
             {
@@ -48,15 +59,27 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, session_filter: Opti
             }
 
             if let Ok(json_str) = serde_json::to_string(&*event)
-                && sender.send(Message::Text(json_str.into())).await.is_err()
             {
-                break;
+                let send_result = tokio::select! {
+                    _ = send_cancel.cancelled() => break,
+                    result = sender.send(Message::Text(json_str.into())) => result,
+                };
+                if send_result.is_err() {
+                    break;
+                }
             }
         }
     });
 
     let recv_task = tokio::spawn(async move {
-        while let Some(msg) = receiver.next().await {
+        loop {
+            let msg = tokio::select! {
+                _ = recv_cancel.cancelled() => break,
+                msg = receiver.next() => match msg {
+                    Some(msg) => msg,
+                    None => break,
+                }
+            };
             match msg {
                 Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
                 Ok(Message::Close(_)) => break,
@@ -69,8 +92,12 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>, session_filter: Opti
         }
     });
 
+    let mut send_task = send_task;
+    let mut recv_task = recv_task;
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        _ = &mut send_task => {},
+        _ = &mut recv_task => {},
     }
+    cancel.cancel();
+    let _ = tokio::join!(send_task, recv_task);
 }

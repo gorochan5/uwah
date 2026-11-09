@@ -41,14 +41,6 @@ fn mime_to_extension(mime: &str) -> &'static str {
     }
 }
 
-fn uuid_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}_{:x}", now.as_millis(), std::process::id())
-}
-
 #[tonic::async_trait]
 impl MediaService for MediaServiceImpl {
     type DownloadMediaStream = Pin<
@@ -179,9 +171,9 @@ impl MediaService for MediaServiceImpl {
         let mut session_id = "default".to_string();
         let mut mime_type = "application/octet-stream".to_string();
 
-        let temp_filename = format!("tmp_grpc_{}", uuid_simple());
+        let temp_filename = format!("tmp_grpc_{}", uuid::Uuid::new_v4());
         let temp_path = media_dir.join(&temp_filename);
-        let mut temp_file = tokio::fs::File::create(&temp_path)
+        let mut temp_file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(&temp_path)
             .await
             .map_err(|e| Status::internal(format!("Failed to create temporary file: {}", e)))?;
 

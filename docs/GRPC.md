@@ -1,6 +1,6 @@
 # Uwah WhatsApp Gateway — Complete gRPC API Reference
 
-The **Uwah WhatsApp Gateway** provides a high-throughput, low-latency gRPC microservices interconnect API running on port `service.port + 1` (default: `6768`). Built with [Tonic](https://github.com/hyperium/tonic) and [Prost](https://github.com/tokio-rs/prost), it provides 100% functional parity with the REST/SSE/WebSocket interfaces over binary HTTP/2 multiplexing.
+The **Uwah WhatsApp Gateway** provides a gRPC API on port `service.port + 1` (default: `6768`). Built with [Tonic](https://github.com/hyperium/tonic) and [Prost](https://github.com/tokio-rs/prost), it exposes corresponding services over HTTP/2. Its feature set overlaps with REST, SSE, and WebSockets but is not guaranteed to match them one-to-one.
 
 ---
 
@@ -260,8 +260,8 @@ grpcurl -plaintext -H "authorization: Bearer SECRET_TOKEN" \
     "chat_jid": "5511988887777@s.whatsapp.net",
     "latitude": -23.55052,
     "longitude": -46.633308,
-    "name": "São Paulo Cathedral",
-    "address": "Praça da Sé, São Paulo - SP"
+  "name": "Central Park",
+  "address": "New York, NY"
   }' \
   127.0.0.1:6768 uwah.v1.MessageService/SendLocation
 

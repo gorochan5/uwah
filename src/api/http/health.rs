@@ -98,7 +98,7 @@ pub async fn liveness_check() -> impl IntoResponse {
 )]
 pub async fn readiness_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let db_ok = sqlx::query("SELECT 1").execute(&state.pool).await.is_ok();
-    let storage_ok = tokio::fs::create_dir_all("data/media_cache").await.is_ok();
+    let storage_ok = tokio::fs::create_dir_all(&state.config.media.dir).await.is_ok();
     let active_sessions = state.sessions.active_count().await;
 
     let is_ready = db_ok && storage_ok;

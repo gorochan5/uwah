@@ -122,10 +122,10 @@ You can inspect models, test request parameters, and execute live endpoints dire
    curl -X POST http://127.0.0.1:6767/sessions \
      -H "Authorization: Bearer 123" \
      -H "Content-Type: application/json" \
-     -d '{"id": "minha-sessao"}'
+     -d '{"id": "primary"}'
    ```
 2. Open the reactive scan portal in your browser:
-   👉 **`http://127.0.0.1:6767/sessions/minha-sessao/scan?token=123`**
+   👉 **`http://127.0.0.1:6767/sessions/primary/scan?token=123`**
 3. Scan the QR code using your WhatsApp phone app (**Linked Devices** $\rightarrow$ **Link a Device**).
 4. The page immediately transitions to a green status card (*"Session Connected"*), and the gateway is ready to send and receive messages!
 
@@ -136,11 +136,11 @@ You can inspect models, test request parameters, and execute live endpoints dire
 Send a real-time message to any phone number or group:
 
 ```bash
-curl -X POST http://127.0.0.1:6767/sessions/minha-sessao/chats/5519998005388/messages \
+curl -X POST http://127.0.0.1:6767/sessions/primary/chats/5519998005388/messages \
   -H "Authorization: Bearer 123" \
   -H "Content-Type: application/json" \
   -d '{
-    "body": "Olá mundo via Uwah Gateway!"
+    "body": "Hello from the Uwah Gateway!"
   }'
 ```
 
@@ -149,11 +149,11 @@ curl -X POST http://127.0.0.1:6767/sessions/minha-sessao/chats/5519998005388/mes
 To quote an existing message, pass `quoted_message_id`:
 
 ```bash
-curl -X POST http://127.0.0.1:6767/sessions/minha-sessao/chats/5519998005388/messages \
+curl -X POST http://127.0.0.1:6767/sessions/primary/chats/5519998005388/messages \
   -H "Authorization: Bearer 123" \
   -H "Content-Type: application/json" \
   -d '{
-    "body": "Essa é uma resposta citando a mensagem anterior!",
+    "body": "This is a reply quoting the previous message.",
     "quoted_message_id": "3EB0C44298FC1C14"
   }'
 ```
@@ -167,12 +167,15 @@ For in-depth guides, consult the dedicated documentation files:
 - [docs/API.md](docs/API.md) — Complete REST endpoint reference and request/response specifications.
 - [docs/DATABASE.md](docs/DATABASE.md) — Schema definitions, indexing, WAL configuration, and SQLite concurrency tuning.
 - [docs/WEBHOOKS.md](docs/WEBHOOKS.md) — Webhook configuration, signatures, retries, outbox and DLQ operations.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — Current reliability priorities and deferred product work.
+- [EVALUATION_v1_validated.md](EVALUATION_v1_validated.md) — Validated findings and implementation status.
 
-### Current limitations
+### Operational notes
 
-- The gRPC services currently expose health checks and event streaming; no gRPC authentication interceptor is configured.
-- The readiness probe currently checks the fixed `data/media_cache` directory rather than `[media].dir`.
-- The REST and gRPC listeners are plain TCP. TLS must be provided by an external proxy or added to the service.
+- REST and gRPC require the configured shared bearer token. Swagger and the QR scan portal also support query tokens for browser use; avoid exposing these URLs in logs or shared history.
+- The readiness probe checks the configured `[media].dir` and database connectivity.
+- REST and gRPC use plain TCP without native TLS. Use a trusted reverse proxy or secure tunnel when traffic crosses an untrusted network.
+- Session workers and background daemons are supervised during shutdown. Webhook dispatch is at-least-once, so webhook consumers should deduplicate by event ID.
 
 ---
 

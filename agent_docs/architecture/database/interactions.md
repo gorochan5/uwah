@@ -1,23 +1,7 @@
-# Interações com o banco
+# Database Interactions
 
-## Objetivo
+`src/database/mod.rs` loads the configured SQLite URL, enables foreign keys, WAL mode, `synchronous=NORMAL`, a 30-second busy timeout, and the configured cache pragmas. SQLx applies embedded migrations during startup. The pool allows up to five connections.
 
-Descrever o acesso SQL efetivamente presente.
+Repositories in `src/repository/` encapsulate application queries. Inbound message handling can persist message state and enqueue webhook events transactionally. The periodic maintenance worker performs a passive WAL checkpoint and incremental vacuum.
 
-## Conexões e inicialização
-
-`src/database/mod.rs::init` cria `SqliteConnectOptions`, habilita foreign keys, WAL, sincronização `NORMAL`, criação do arquivo e um `SqlitePool` com `max_connections(5)`. O pool é guardado em `OnceLock`; `get()` falha com panic se `init()` não tiver sido chamado. As migrations são executadas com `sqlx::migrate!("./migrations")`.
-
-## Repositórios
-
-`src/repository/{sessions,chats,messages,contacts,calls,group_participants,media_cache}.rs` usam `crate::database::get()`, `query_as!` para leituras e `query!` para escritas. Há `get_all`, buscas pontuais e, na maioria, `create`/`delete`. Sessões também têm `auth`, `refresh_qr` e `rename`.
-
-As leituras filtradas por sessão existem em alguns métodos, mas mensagens, por exemplo, buscam por `id` sem `session_id`; participantes têm assinatura e filtro incompletos. Criações inserem apenas a chave, apesar de várias colunas serem `NOT NULL`, e não há atualização de chats, mensagens, contatos ou chamadas completas.
-
-## Erros e consistência
-
-As operações retornam `anyhow::Result` e adicionam contexto textual; não há mapeamento para API, retry, idempotência, transação ou estratégia de concorrência além do pool SQLite/WAL. Logs de repositório incluem identificadores e `sessions::auth`/`refresh_qr` registram dados sensíveis, inclusive QR payload.
-
-## Estado
-
-O acesso é um esqueleto não integrado ao `main`. Persistência de sessões, mensagens, eventos e mídia não está comprovadamente conectada ao motor WhatsApp. Consulte [schema.md](schema.md) e [../workflow.md](../workflow.md).
+Do not access the database directly during repository work. Consult [the database guide](../../../docs/DATABASE.md) and the migration files.

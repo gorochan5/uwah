@@ -93,9 +93,9 @@ To guarantee cryptographic integrity and complete isolation between sessions, **
 1. **Static Configuration**:
    Loaded once at boot using `OnceLock<Config>`. Exposed to all handlers via `&'static Config` (zero heap allocations per request).
 2. **Background Session Worker**:
-   When a session is created or accessed, `SessionManager` boots an async `Bot`. The `BotHandle` is spawned on a dedicated Tokio background task (`tokio::spawn(async move { bot_handle.await })`), keeping the Noise socket and event listener alive across HTTP request boundaries.
-3. **Inbound Event Processing & Filtering**:
-   The `on_message` hook intercepts real-time incoming messages. If a chat kind is disabled in `[filter]` (`contacts`, `groups`, `channels`, `transmission`), the gateway drops the payload before DB insertion or webhook emission. For allowed chats, it automatically ensures the corresponding chat stub exists in `uwah.db` (preventing foreign key violations), extracts payload text, and persists the record idempotently.
+   `SessionManager` boots an async `Bot` and retains a supervised worker handle with a cancellation token. Unexpected worker termination removes the session from the active registry. Explicit stop cancels and joins the worker.
+3. **Inbound Event Processing**:
+   The registered event callback dispatches incoming WhatsApp events to the event handlers. Message handlers persist message and chat state and enqueue webhook events transactionally where supported. Exact extraction and persistence behavior is implemented by the event handlers and repositories.
 4. **Outbound Messaging Pipeline**:
    The REST API retrieves the `Arc<Client>` from `SessionManager`, builds a WhatsApp `wa::Message` (with `ContextInfo` when `quoted_message_id` is present), and dispatches asynchronously through WhatsApp's encrypted channel.
 
@@ -111,7 +111,7 @@ Configured webhooks are delivered through a transactional outbox worker. Failed 
 
 ## 6. gRPC Microservices Subsystem
 
-Uwah exposes a high-throughput gRPC endpoint on `service.port + 1` (default `6768`) offering 100% functional parity with the REST layer across 11 Tonic services:
+Uwah exposes a gRPC endpoint on `service.port + 1` (default `6768`) across 11 Tonic services. Its surface overlaps with REST but is not guaranteed to have complete one-to-one feature parity:
 - **Service Discovery**: Enabled via gRPC Server Reflection Protocol v1 (`tonic-reflection`), allowing dynamic inspection with `grpcurl` or GUI clients.
 - **Service Modules**: `HealthService`, `EventStreamService`, `SessionService`, `ChatService`, `GroupService`, `GroupParticipantService`, `MessageService`, `ContactService`, `CallService`, `MediaService`, and `WebhookDlqService`.
 - **Media & Event Streaming**: Native HTTP/2 chunked streaming for both file downloads (`64KB` chunks) and upload pipelines, as well as real-time event broadcasting.
@@ -121,6 +121,6 @@ Uwah exposes a high-throughput gRPC endpoint on `service.port + 1` (default `676
 
 REST protected routes require a Bearer token. Swagger and the scan portal have browser-specific query-token handling. The gRPC server is protected by a Tonic metadata interceptor requiring `authorization: Bearer <token>` validated against `[service].auth` in constant time (returning `unauthenticated` on any failure). Neither HTTP nor gRPC listeners configure TLS internally (TLS termination should be handled by a reverse proxy or ingress).
 
-The startup probe confirms that the `sessions` table can be queried. The readiness probe checks the database, active-session count and storage health.
+The startup probe confirms that the `sessions` table can be queried. The readiness probe checks database connectivity and the configured media directory. It also reports active session count; that count does not determine readiness.
 
 

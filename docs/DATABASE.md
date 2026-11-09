@@ -97,13 +97,13 @@ Stores metadata and deduplicated SHA-256 binary references.
 
 The initial migration also creates `chats`, `messages`, `contacts`, `group_participants` and `calls`. Their composite keys are session-scoped: for example, chats use `(session_id, jid)` and messages/calls use `(id, session_id)`. Foreign keys cascade session deletion; message media references use `ON DELETE SET NULL`.
 
-Later migrations add performance indexes, session-key cascade behavior, `outbox_events`, `webhook_dlq` and `group_metadata`. The authoritative schema is the SQL under `migrations/`; this document summarizes the current contract and should be updated whenever a migration changes it.
+The versioned SQL under `migrations/` is authoritative. The two historical files named for session-key cascade and group metadata are empty in this checkout, so those changes must not be assumed to exist in every database. `20261109000000_repair_outbox_schema.sql` additively creates `outbox_events`, `webhook_dlq`, and their indexes when absent. The performance-index migration is also versioned under `migrations/`. Review clean-install and upgrade behavior before relying on schema changes that are described only in roadmap or design documents.
 
 ---
 
 ## 3. SQLite Engine Pragma Tuning
 
-Configured during pool initialization in [`src/database/mod.rs`](file:///r:/projects/rust/uwah/src/database/mod.rs):
+Configured during pool initialization in [`src/database/mod.rs`](../src/database/mod.rs):
 - `PRAGMA journal_mode = WAL;` (Concurrent readers and single writer without read locks)
 - `PRAGMA synchronous = NORMAL;` (High throughput durability balance)
 - `PRAGMA cache_size = -64000;` (64MB RAM page cache)

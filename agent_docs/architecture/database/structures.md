@@ -1,29 +1,10 @@
-# Estruturas de dados de persistência
+# Storage Structures
 
-## Objetivo
+UWAH uses two storage tiers:
 
-Relacionar modelos Rust e tabelas declaradas.
+- `uwah.db` stores gateway application data through SQLx and SQLite.
+- `sessions/{id}.db` stores WhatsApp protocol and cryptographic state through the library's SQLite backend.
 
-## Modelos
+Application repositories own gateway queries. The application must not directly inspect or mutate per-session protocol databases. Schema changes belong in versioned SQL migrations; preserve checksums of historical migrations that may already have been applied.
 
-Todos os modelos em `src/models` derivam `Serialize`, `Deserialize`, `Debug`, `Clone` e `sqlx::FromRow` (com variações de imports não utilizados).
-
-| Rust | Arquivo | Correspondência |
-|---|---|---|
-| `Session` | `src/models/sessions.rs` | `sessions`; status e QR são `String`/`Option<String>` |
-| `Chat` | `src/models/chats.rs` | `chats`; flags bool, contadores i64, timestamps opcionais |
-| `Message` | `src/models/messages.rs` | `messages`; `media_key` vira `Option<Vec<u8>>` |
-| `Contact` | `src/models/contacts.rs` | `contacts`; `devices` permanece string |
-| `GroupParticipant` | `src/models/group_participants.rs` | `group_participants` |
-| `Call` | `src/models/calls.rs` | `calls` |
-| `MediaCache` | `src/models/media_cache.rs` | `media_cache` |
-
-Não há DTOs de API, enums Rust para estados, conversões de domínio, entidades transitórias ou estruturas de sessão em memória. Os estados descritos no SQL/README são strings sem validação de domínio.
-
-## Serialização
-
-`serde` permite serialização potencial para JSON, mas nenhum handler usa esses modelos. `sqlx::query_as!` faz aliases explícitos para timestamps UTC e nulabilidade. A migration usa `TIMESTAMP`, enquanto o modelo usa `chrono::DateTime<Utc>`.
-
-## Limitações
-
-Os modelos não representam todas as regras relacionais e alguns repositórios tentam inserir somente identificadores em colunas `NOT NULL`, portanto não constituem ainda uma camada persistente funcional.
+See [the database guide](../../../docs/DATABASE.md).

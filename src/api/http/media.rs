@@ -291,9 +291,9 @@ pub async fn upload_media(
     })?;
 
     // Create temporary file for streaming write
-    let temp_filename = format!("tmp_{}_{}", session_id, uuid_simple());
+    let temp_filename = format!("tmp_{}_{}", session_id, uuid::Uuid::new_v4());
     let temp_path = media_dir.join(&temp_filename);
-    let mut temp_file = tokio::fs::File::create(&temp_path).await.map_err(|e| {
+    let mut temp_file = tokio::fs::OpenOptions::new().write(true).create_new(true).open(&temp_path).await.map_err(|e| {
         AppError::Internal(anyhow::anyhow!("Failed to create temporary file: {}", e))
     })?;
 
@@ -391,10 +391,3 @@ fn mime_to_extension(mime: &str) -> &'static str {
     }
 }
 
-fn uuid_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}_{:x}", now.as_millis(), std::process::id())
-}

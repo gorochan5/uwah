@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use tokio::sync::{RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use whatsapp_rust::prelude::*;
 use whatsapp_rust::types::events::Event;
 
-#[derive(Clone)]
 pub enum SessionState {
     Starting(broadcast::Sender<Result<Arc<Client>, String>>),
-    Running(Arc<Client>, CancellationToken),
+    Running(Arc<Client>, CancellationToken, tokio::task::JoinHandle<()>),
 }
 
 #[derive(Clone)]
@@ -31,7 +30,7 @@ impl SessionManager {
     pub async fn get_client(&self, session_id: &str) -> Option<Arc<Client>> {
         let guard = self.sessions.read().await;
         match guard.get(session_id) {
-            Some(SessionState::Running(client, _)) => Some(Arc::clone(client)),
+            Some(SessionState::Running(client, _, _)) => Some(Arc::clone(client)),
             _ => None,
         }
     }
@@ -39,7 +38,7 @@ impl SessionManager {
     /// Checks if a session is currently running in memory.
     pub async fn is_running(&self, session_id: &str) -> bool {
         let guard = self.sessions.read().await;
-        matches!(guard.get(session_id), Some(SessionState::Running(_, _)))
+        matches!(guard.get(session_id), Some(SessionState::Running(_, _, _)))
     }
 
     /// Returns the number of currently running sessions.
@@ -47,7 +46,7 @@ impl SessionManager {
         let guard = self.sessions.read().await;
         guard
             .values()
-            .filter(|s| matches!(s, SessionState::Running(_, _)))
+            .filter(|s| matches!(s, SessionState::Running(_, _, _)))
             .count()
     }
 
@@ -57,7 +56,7 @@ impl SessionManager {
         guard
             .iter()
             .filter_map(|(id, s)| match s {
-                SessionState::Running(_, _) => Some(id.clone()),
+                SessionState::Running(_, _, _) => Some(id.clone()),
                 _ => None,
             })
             .collect()
@@ -70,9 +69,17 @@ impl SessionManager {
             guard.remove(session_id)
         };
 
-        if let Some(SessionState::Running(_, cancel_token)) = state_opt {
+        if let Some(SessionState::Running(_, cancel_token, worker)) = state_opt {
             info!(session_id = %session_id, "Unregistering session from memory");
             cancel_token.cancel();
+            drop(worker);
+        }
+    }
+
+    async fn mark_worker_stopped(&self, session_id: &str) {
+        let mut guard = self.sessions.write().await;
+        if matches!(guard.get(session_id), Some(SessionState::Running(_, _, _))) {
+            guard.remove(session_id);
         }
     }
 
@@ -85,10 +92,13 @@ impl SessionManager {
         };
 
         match state_opt {
-            Some(SessionState::Running(client, cancel_token)) => {
+            Some(SessionState::Running(client, cancel_token, worker)) => {
                 info!(session_id = %session_id, "Disconnecting and terminating WhatsApp client");
                 cancel_token.cancel();
                 client.disconnect().await;
+                if let Err(err) = worker.await {
+                    warn!(session_id = %session_id, error = %err, "Session worker task failed while stopping");
+                }
             }
             Some(SessionState::Starting(tx)) => {
                 let _ = tx.send(Err("Session stopped while starting".to_string()));
@@ -127,7 +137,7 @@ impl SessionManager {
         let (broadcast_tx, wait_rx) = {
             let mut guard = self.sessions.write().await;
             match guard.get(&session_id) {
-                Some(SessionState::Running(client, _)) => {
+                Some(SessionState::Running(client, _, _)) => {
                     info!(session_id = %session_id, "Session already active in memory");
                     return Ok(Arc::clone(client));
                 }
@@ -158,12 +168,17 @@ impl SessionManager {
         let init_res = self.initialize_bot(&session_id).await;
 
         match init_res {
-            Ok((client, cancel_token)) => {
+            Ok((client, cancel_token, worker, worker_alive)) => {
                 let client_ret = Arc::clone(&client);
                 let mut guard = self.sessions.write().await;
+                if !worker_alive.load(Ordering::Acquire) {
+                    guard.remove(&session_id);
+                    let _ = notify_tx.send(Err("Session worker exited during startup".to_string()));
+                    return Err(anyhow::anyhow!("Session worker exited during startup"));
+                }
                 guard.insert(
                     session_id.clone(),
-                    SessionState::Running(Arc::clone(&client), cancel_token),
+                SessionState::Running(Arc::clone(&client), cancel_token, worker),
                 );
                 let _ = notify_tx.send(Ok(Arc::clone(&client_ret)));
                 Ok(client_ret)
@@ -178,7 +193,7 @@ impl SessionManager {
         }
     }
 
-    async fn initialize_bot(&self, session_id: &str) -> anyhow::Result<(Arc<Client>, CancellationToken)> {
+    async fn initialize_bot(&self, session_id: &str) -> anyhow::Result<(Arc<Client>, CancellationToken, tokio::task::JoinHandle<()>, Arc<AtomicBool>)> {
         // Ensure storage directory exists
         let sessions_dir = Path::new(&self.sessions_dir);
         if !sessions_dir.exists() {
@@ -216,23 +231,31 @@ impl SessionManager {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to build Bot for '{}': {}", session_id, e))?;
 
-        let bot_handle = bot.spawn();
+        let mut bot_handle = bot.spawn();
         let client = bot_handle.client();
         let cancel_token = CancellationToken::new();
         let cancel_task = cancel_token.clone();
+        let mgr_worker = self.clone();
+        let worker_alive = Arc::new(AtomicBool::new(true));
+        let worker_alive_task = worker_alive.clone();
 
         let sid_task = session_id.to_string();
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel_task.cancelled() => {
-                    info!(session_id = %sid_task, "WhatsApp bot worker cancellation acknowledged");
-                }
-                _ = bot_handle => {
-                    info!(session_id = %sid_task, "WhatsApp bot worker loop completed");
-                }
+        let worker = tokio::spawn(async move {
+            let completed = tokio::select! {
+                _ = cancel_task.cancelled() => false,
+                _ = &mut bot_handle => true,
+            };
+            if completed {
+                info!(session_id = %sid_task, "WhatsApp bot worker loop completed");
+                worker_alive_task.store(false, Ordering::Release);
+                mgr_worker.mark_worker_stopped(&sid_task).await;
+            } else {
+                info!(session_id = %sid_task, "WhatsApp bot worker cancellation acknowledged");
+                bot_handle.abort();
+                let _ = bot_handle.await;
             }
         });
 
-        Ok((client, cancel_token))
+        Ok((client, cancel_token, worker, worker_alive))
     }
 }

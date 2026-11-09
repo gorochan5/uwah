@@ -1,38 +1,15 @@
-# Fluxo operacional
+# Runtime Workflow
 
-## Objetivo
+## Startup
 
-Descrever o fluxo atual e separar capacidades implementadas de lacunas conhecidas.
+`src/main.rs` initializes logging and configuration, opens the SQLite pool and applies migrations, creates shared application state, and awaits connected-session auto-boot. It then starts the outbox and maintenance workers, starts gRPC on `service.port + 1`, and serves the Axum HTTP API.
 
-## Estado atual
+## Requests and events
 
-`src/main.rs` inicializa logging, configuração, pool SQLite e migrations; cria `SessionManager`, event bus e router HTTP; hidrata sessões conectadas; inicia outbox e manutenção; sobe o gRPC na porta `service.port + 1`; serve REST e executa shutdown coordenado.
+HTTP and gRPC handlers validate requests and bearer credentials, obtain a session client when required, call the WhatsApp library, and persist application data through repositories. Incoming events are dispatched to handlers and published to configured event transports. Webhook delivery is asynchronous and at-least-once.
 
-## Fluxo pretendido
+## Shutdown
 
-O desenho sugerido pelo README é:
+After HTTP graceful shutdown, the process cancels and awaits gRPC, outbox, and maintenance tasks. It then stops active sessions, joins their workers, and closes the database pool. Auto-boot has already completed before the HTTP server starts.
 
-```mermaid
-flowchart TD
-  A[Processo] --> B[Carregar configuração]
-  B --> C[Inicializar SQLite e migrações]
-  C --> D[Restaurar sessões]
-  D --> E[Conectar whatsapp-rust]
-  E --> F[Servir HTTP e gRPC]
-  F --> G[Requisições e eventos]
-  G --> H[Persistir modelos]
-```
-
-Nenhuma dessas etapas está implementada de ponta a ponta. Há apenas `config::init`, `database::init` e a criação parcial de um listener Axum no arquivo de entrada.
-
-## Configuração e banco
-
-`src/config/mod.rs` define `Config`, `Database`, `Service`, `Media`, `Sessions` e `Webhook`, valida os campos e carrega `uwah.toml`. `src/database/mod.rs` lê `database.dir`, habilita foreign keys, WAL, `NORMAL`, abre pool SQLite com no máximo cinco conexões e executa as migrations.
-
-## APIs, sessões e eventos
-
-As APIs HTTP, o servidor gRPC, a criação/recuperação de sessão, QR code, envio de mensagens, consumidores de eventos e shutdown coordenado estão implementados. O grau de suporte de cada recurso deve ser conferido em `docs/API.md` e nos handlers correspondentes.
-
-## Erros e observabilidade
-
-Repositórios usam `anyhow::Context`; a inicialização do banco usa `expect`, convertendo falhas em panic. `src/log/mod.rs` configura tracing no console e em `uwah.log`, mas não é chamado pelo `main` atual.
+See [the architecture guide](../../docs/ARCHITECTURE.md) and [webhook operations](../../docs/WEBHOOKS.md).

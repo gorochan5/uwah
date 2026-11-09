@@ -1,11 +1,5 @@
-# Grupos — estado atual
+# Groups
 
-> Administração de grupos e participantes possui handlers em `src/api/http/chats.rs` e `src/api/http/group_participants.rs`. Consulte `docs/API.md`; notas abaixo podem ser históricas.
+The API exposes group creation/joining and participant listing and management. Chat handlers also expose supported group settings. Operations depend on WhatsApp permissions, current protocol support, and the capabilities implemented by the library.
 
-## Objetivo
-
-Registrar o suporte efetivamente identificado para grupos.
-
-Grupos não têm entidade própria: são `Chat` com `kind = "group"`, identificados pelo JID. Participantes usam `GroupParticipant` em `src/models/group_participants.rs`, com sessão, `group_jid`, `user_jid`, `role` e `joined_at`; a migration prevê `member`, `admin` e `superadmin` por convenção.
-
-`src/repository/group_participants.rs` esboça leitura/criação/exclusão, mas `get_one`, `create` e `delete` operam apenas com `session_id` e não refletem a chave composta completa. Não existem metadados sincronizados, operações de gerenciamento, eventos, API ou integração WhatsApp implementados.
+Do not assume that a `group_metadata` table exists in every deployment: its historical migration file is empty in this checkout. See [the database guide](../../../docs/DATABASE.md), [the API reference](../../../docs/API.md), and [the gRPC reference](../../../docs/GRPC.md).

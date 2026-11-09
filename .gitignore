@@ -1,4 +1,15 @@
 /target
+# Local environment files and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+# Local databases and logs
 uwah.db
 uwah.log
 uwah.db-wal

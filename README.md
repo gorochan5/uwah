@@ -1,184 +1,133 @@
-# uwah
+# Uwah
 
-> **Unified WhatsApp Hub** — a self-hosted, high-performance WhatsApp gateway that manages multiple sessions and exposes an interactive REST API, dynamic web portal, and gRPC interface.
+Uwah is a self-hosted WhatsApp gateway written in Rust. It manages multiple WhatsApp sessions and exposes REST and gRPC APIs, live event streams, a browser-based QR pairing page, and optional webhooks.
 
-[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange?logo=rust)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Swagger](https://img.shields.io/badge/swagger-OpenAPI%203.1-brightgreen)](http://127.0.0.1:6767/swagger?key=123)
-[![Status: Active](https://img.shields.io/badge/status-active%20development-blue)]()
+> **Project status:** actively developed. API and protocol behavior can change between releases.
 
----
+## Capabilities
 
-## 🚀 Key Highlights
+- Manage independent WhatsApp sessions, each with its own protocol store.
+- Send and receive messages, media, contacts, group operations, presence updates, and call actions through HTTP or gRPC APIs.
+- Stream gateway events over Server-Sent Events, WebSockets, or gRPC.
+- Deliver configured webhook events through a persistent outbox with retry and dead-letter handling.
+- Cache media by SHA-256 and expose health probes and Prometheus-style metrics.
 
-- 🔗 **Multi-Session Isolation** — Each WhatsApp account runs its own background bot worker with isolated Signal protocol storage (`sessions/{id}.db`).
-- ⚡ **Instant Messaging & Quotes** — Real-time outbound message dispatch and inbound message interception with full **quoted reply** (`quoted_message_id`) context support.
-- 📱 **QR Portal** — Vector SVG QR rendering via **Maud + HTMX** (`/sessions/:id/scan?token=123`). The portal validates its browser token separately from the protected REST routes.
-- 📖 **Interactive Swagger UI** — Built-in OpenAPI 3.1 interface at `/swagger` powered by `utoipa` and `utoipa-swagger-ui`; browser access may use `?key=` or `?token=`.
-- 🗄️ **Hardened SQLite Concurrency** — Application database (`uwah.db`) operating in WAL mode with `busy_timeout(30s)` and idempotent upserts to eliminate lock contention.
-- 🔒 **HTTP Security** — Protected REST routes require `Authorization: Bearer <token>`. Swagger and the scan portal additionally support browser query tokens, with plaintext or SHA-256 digest matching.
+## Requirements
 
----
+- A stable Rust toolchain with Cargo (the project uses Rust edition 2024).
+- A writable local directory for the application database, session protocol stores, media cache, and logs.
+- Network access from the host to WhatsApp and, if configured, to the webhook receiver.
 
-## 🏛️ System Architecture
+## Configure
 
-```
-                      ┌────────────────────────────┐
-                      │    HTTP Clients / Browsers │
-                      └─────────────┬──────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                              Axum 0.8                                  │
-│  ┌─────────────────────────┬───────────────────┬────────────────────┐  │
-│  │   Protected REST API    │   Maud + HTMX     │     Swagger UI     │  │
-│  │  (/sessions, /chats...) │ (/sessions/:id/   │   (/swagger?key=)  │  │
-│  │  (Bearer Auth Token)    │      scan)        │   (OpenAPI 3.1)    │  │
-│  └────────────┬────────────┴─────────┬─────────┴──────────┬─────────┘  │
-│               │                      │                    │            │
-│               └──────────────────────┼────────────────────┘            │
-│                                      ▼                                 │
-│                         ┌─────────────────────────┐                    │
-│                         │        AppState         │                    │
-│                         │ - &'static Config       │                    │
-│                         │ - SqlitePool (uwah.db)  │                    │
-│                         │ - Arc<SessionManager>   │                    │
-│                         └────────────┬────────────┘                    │
-└──────────────────────────────────────┼─────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                        SessionManager Layer                            │
-│           (Registry of Active WhatsApp Bots: HashMap<ID, Arc<Client>>)  │
-│                                                                        │
-│   ┌──────────────────────────┐        ┌──────────────────────────┐     │
-│   │    WhatsApp Session A    │        │    WhatsApp Session B    │     │
-│   │   - Bot / Client Worker  │        │   - Bot / Client Worker  │     │
-│   │   - Background Tokio Task│        │   - Background Tokio Task│     │
-│   │   - on_message handler   │        │   - on_message handler   │     │
-│   │   - on_qr_code handler   │        │   - on_qr_code handler   │     │
-│   │   - on_connected handler │        │   - on_connected handler │     │
-│   └────────────┬─────────────┘        └────────────┬─────────────┘     │
-└────────────────┼───────────────────────────────────┼───────────────────┘
-                 │                                   │
-                 ▼                                   ▼
-      ┌─────────────────────┐             ┌─────────────────────┐
-      │  sessions/{id_a}.db │             │  sessions/{id_b}.db │
-      │ (Signal Keys Store) │             │ (Signal Keys Store) │
-      └─────────────────────┘             └─────────────────────┘
-                 │                                   │
-                 └─────────────────┬─────────────────┘
-                                   ▼
-                         ┌───────────────────┐
-                         │      uwah.db      │
-                         │(Gateway App State)│
-                         └───────────────────┘
-```
-
-Detailed technical breakdown available in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
----
-
-## ⚙️ Configuration (`uwah.toml`)
-
-Uwah is configured through a clean `uwah.toml` file at the root:
+Create `uwah.toml` in the repository root. Use absolute paths for persistent data directories in production.
 
 ```toml
 [database]
-# Path to the application state SQLite database
-dir = "d:/projects/rust/uwah/uwah.db"
+dir = "./data/uwah.db"
 
 [service]
-host = "localhost"
+host = "127.0.0.1"
 port = 6767
-# Plaintext token (e.g. "123") OR SHA-256 hex digest
-auth = "123"
+# Use a long, randomly generated secret. Do not commit this file.
+auth = "replace-with-a-long-random-secret"
 
 [media]
-# Directory where downloaded media files are cached
-dir = "d:/projects/rust/uwah/media"
+dir = "./data/media"
+cache_ttl_seconds = 604800
+max_file_size = 104857600
+max_concurrent_downloads = 3
 
 [sessions]
-# Directory where per-session Signal stores are maintained
-dir = "d:/projects/rust/uwah/sessions"
+dir = "./data/sessions"
+
+[filter]
+contacts = true
+groups = true
+channels = true
+transmission = true
+
+# Optional. Omit this section to disable webhook delivery.
+[webhook]
+enabled = false
+# url = "https://hooks.example.com/uwah"
+# secret = "replace-with-a-separate-webhook-signing-secret"
 ```
 
----
+`service.port` is the HTTP port. The gRPC server listens on the next port (`port + 1`). Both listeners use cleartext transport; terminate TLS at a trusted reverse proxy when traffic crosses an untrusted network. The `auth` value can be the token itself or its SHA-256 hex digest.
 
-## 📖 Swagger UI
+The `.gitignore` excludes local `.env` files, common private-key formats, local databases, logs, and build output. Keep credentials and WhatsApp session stores out of version control.
 
-Access the interactive API explorer directly in your browser:
+## Run locally
 
-👉 **`http://127.0.0.1:6767/swagger?key=123`**
-
-You can inspect models, test request parameters, and execute live endpoints directly from the UI.
-
----
-
-## 📱 Pairing a Device (Maud + HTMX QR Scanner)
-
-1. Create a session via REST:
-   ```bash
-   curl -X POST http://127.0.0.1:6767/sessions \
-     -H "Authorization: Bearer 123" \
-     -H "Content-Type: application/json" \
-     -d '{"id": "primary"}'
-   ```
-2. Open the reactive scan portal in your browser:
-   👉 **`http://127.0.0.1:6767/sessions/primary/scan?token=123`**
-3. Scan the QR code using your WhatsApp phone app (**Linked Devices** $\rightarrow$ **Link a Device**).
-4. The page immediately transitions to a green status card (*"Session Connected"*), and the gateway is ready to send and receive messages!
-
----
-
-## 💬 Sending Messages
-
-Send a real-time message to any phone number or group:
-
-```bash
-curl -X POST http://127.0.0.1:6767/sessions/primary/chats/5519998005388/messages \
-  -H "Authorization: Bearer 123" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "body": "Hello from the Uwah Gateway!"
-  }'
+```sh
+cargo run
 ```
 
-### Quoting / Replying to a Message
+On startup, Uwah reads `uwah.toml`, opens the configured SQLite database, applies embedded SQLx migrations, restores eligible sessions, and starts the HTTP and gRPC servers. The process must be able to write to all configured data directories.
 
-To quote an existing message, pass `quoted_message_id`:
+To check or lint the source without starting the gateway:
 
-```bash
-curl -X POST http://127.0.0.1:6767/sessions/primary/chats/5519998005388/messages \
-  -H "Authorization: Bearer 123" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "body": "This is a reply quoting the previous message.",
-    "quoted_message_id": "3EB0C44298FC1C14"
-  }'
+```sh
+cargo check --all-targets
+cargo clippy --all-targets
 ```
 
----
+Unit and isolated HTTP integration tests run with:
 
-## 📚 Documentation Index
+```sh
+cargo test --all-targets
+```
 
-For in-depth guides, consult the dedicated documentation files:
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — System internals, dual-database design, and event loop lifecycles.
-- [docs/API.md](docs/API.md) — Complete REST endpoint reference and request/response specifications.
-- [docs/DATABASE.md](docs/DATABASE.md) — Schema definitions, indexing, WAL configuration, and SQLite concurrency tuning.
-- [docs/WEBHOOKS.md](docs/WEBHOOKS.md) — Webhook configuration, signatures, retries, outbox and DLQ operations.
-- [docs/ROADMAP.md](docs/ROADMAP.md) — Current reliability priorities and deferred product work.
-- [EVALUATION_v1_validated.md](EVALUATION_v1_validated.md) — Validated findings and implementation status.
+GitHub Actions runs these checks and tests on pushes and pull requests. Integration tests use a temporary SQLite database and do not connect to WhatsApp.
 
-### Operational notes
+## First session
 
-- REST and gRPC require the configured shared bearer token. Swagger and the QR scan portal also support query tokens for browser use; avoid exposing these URLs in logs or shared history.
-- The readiness probe checks the configured `[media].dir` and database connectivity.
-- REST and gRPC use plain TCP without native TLS. Use a trusted reverse proxy or secure tunnel when traffic crosses an untrusted network.
-- Session workers and background daemons are supervised during shutdown. Webhook dispatch is at-least-once, so webhook consumers should deduplicate by event ID.
+The protected HTTP API uses a Bearer token. Create a session, then open its scan page and link it from WhatsApp's **Linked devices** screen.
 
----
+```sh
+curl -X POST http://127.0.0.1:6767/sessions \
+  -H 'Authorization: Bearer replace-with-a-long-random-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"primary"}'
+```
 
-## 📄 License
+Open `http://127.0.0.1:6767/sessions/primary/scan?token=replace-with-a-long-random-secret` in a browser. Query-string credentials can be recorded in browser history, proxy logs, and telemetry. Restrict access to this page and avoid sharing the URL.
 
-[MIT](./LICENSE) © uwah contributors
+## Send a message
+
+```sh
+curl -X POST \
+  http://127.0.0.1:6767/sessions/primary/chats/15551234567%40s.whatsapp.net/messages \
+  -H 'Authorization: Bearer replace-with-a-long-random-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"body":"Hello from Uwah"}'
+```
+
+Use the recipient's WhatsApp JID in the path. For a quoted reply, include `quoted_message_id` in the JSON body. See the [REST API reference](docs/API.md) for endpoint details and payloads.
+
+## Interfaces
+
+| Interface | Default address | Authentication |
+| --- | --- | --- |
+| REST API | `http://127.0.0.1:6767` | `Authorization: Bearer <token>` on protected routes |
+| Swagger UI | `http://127.0.0.1:6767/swagger` | Browser token via `?key=` or `?token=`; API requests still require Bearer auth |
+| gRPC | `127.0.0.1:6768` | `authorization: Bearer <token>` metadata |
+| QR pairing page | `/sessions/{id}/scan` | Browser query token or Bearer authorization |
+
+Health probes and `/metrics` are public HTTP routes. The QR page and Swagger use browser-oriented authentication. See the [security guidance](docs/API.md#security-and-authentication) before exposing the service.
+
+## Documentation
+
+- [REST API](docs/API.md)
+- [gRPC API](docs/GRPC.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Database and migrations](docs/DATABASE.md)
+- [Webhook delivery and DLQ](docs/WEBHOOKS.md)
+- [Roadmap](docs/ROADMAP.md)
+
+The `proto/uwah/v1/` directory contains the versioned Protocol Buffer contracts. The `migrations/` directory is the authoritative application database schema history.
+
+## License
+
+No license file or package license is currently present in this repository. Contact the maintainers before redistributing the project.

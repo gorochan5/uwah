@@ -1,15 +1,18 @@
 # Security Model
 
-## Credentials
+## Authentication
 
-`[service].auth` is required and is shared by protected REST and gRPC APIs. Credentials may be configured as plaintext or as the corresponding SHA-256 digest. Comparisons use the security module's constant-time verification.
+`[service].auth` is the shared credential for protected REST and gRPC application routes. It can be configured as plaintext or as the SHA-256 hex digest of the token. Comparisons use constant-time verification.
 
-- REST uses `Authorization: Bearer <TOKEN>`.
-- Tonic services use gRPC metadata `authorization: Bearer <TOKEN>`.
-- Swagger and the QR scan portal support query tokens for browser use. Query credentials may be exposed through logs, history, and telemetry; avoid sharing or externally exposing such URLs.
+- REST: `Authorization: Bearer <TOKEN>`.
+- gRPC: `authorization: Bearer <TOKEN>` metadata.
+- Swagger and the QR pairing page support browser query tokens. Query credentials can appear in browser history, proxy logs, and telemetry; avoid sharing those URLs.
+- Health probes, `/metrics`, and gRPC reflection are not protected by the application Bearer middleware. Restrict access at the network boundary where needed.
 
-## Transport and payloads
+## Transport and data
 
-The HTTP and gRPC listeners do not terminate TLS. Use a trusted TLS reverse proxy or secure tunnel on untrusted networks. Webhook payloads can be HMAC-SHA256 signed. Media services validate canonical paths to prevent traversal.
+The HTTP and gRPC listeners do not terminate TLS. Use a trusted TLS reverse proxy or secure tunnel for untrusted networks. Webhook requests can be signed with HMAC-SHA256; the receiver is responsible for enforcing any signature timestamp age window.
 
-See [the API security model](../../docs/API.md) and [the gRPC guide](../../docs/GRPC.md).
+Media paths are checked against the configured cache root. Application data and WhatsApp protocol stores may contain sensitive personal and cryptographic information. Limit filesystem permissions and keep them out of source control.
+
+See the [REST security guidance](../../docs/API.md#security-and-authentication), [gRPC reference](../../docs/GRPC.md#authentication-and-transport), and [webhook guide](../../docs/WEBHOOKS.md).

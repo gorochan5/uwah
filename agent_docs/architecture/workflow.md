@@ -2,14 +2,16 @@
 
 ## Startup
 
-`src/main.rs` initializes logging and configuration, opens the SQLite pool and applies migrations, creates shared application state, and awaits connected-session auto-boot. It then starts the outbox and maintenance workers, starts gRPC on `service.port + 1`, and serves the Axum HTTP API.
+`src/main.rs` initializes logging, loads and validates `uwah.toml`, opens the configured SQLite pool, and applies embedded migrations. It builds shared application state, restores eligible connected sessions, starts the webhook outbox and database-maintenance tasks, starts gRPC on `service.port + 1`, and then serves HTTP.
 
 ## Requests and events
 
-HTTP and gRPC handlers validate requests and bearer credentials, obtain a session client when required, call the WhatsApp library, and persist application data through repositories. Incoming events are dispatched to handlers and published to configured event transports. Webhook delivery is asynchronous and at-least-once.
+Protected HTTP and gRPC requests are authenticated with the configured service token. Handlers validate request data, call the WhatsApp client when an operation requires it, and persist gateway state through repository modules. Incoming WhatsApp events are handled by domain handlers and may be broadcast to live event consumers or stored for webhook delivery.
+
+The broadcast bus is in-memory and bounded. Webhook delivery is persistent and at-least-once; receivers should deduplicate events.
 
 ## Shutdown
 
-After HTTP graceful shutdown, the process cancels and awaits gRPC, outbox, and maintenance tasks. It then stops active sessions, joins their workers, and closes the database pool. Auto-boot has already completed before the HTTP server starts.
+After HTTP graceful shutdown, the process cancels and joins gRPC, outbox, and maintenance tasks, stops active session workers, and closes the database pool. There is no fixed shutdown deadline.
 
-See [the architecture guide](../../docs/ARCHITECTURE.md) and [webhook operations](../../docs/WEBHOOKS.md).
+See [Architecture](../../docs/ARCHITECTURE.md) and [Webhook delivery](../../docs/WEBHOOKS.md).

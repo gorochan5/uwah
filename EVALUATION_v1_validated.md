@@ -6,6 +6,8 @@ This document validates the findings in [`EVALUATION_v1.md`](EVALUATION_v1.md) a
 
 The project already has REST and gRPC APIs, session workers, an in-process event bus, SSE and WebSocket streams, a webhook outbox/DLQ, media caching, basic Prometheus metrics, and separate SQLite stores for gateway data and WhatsApp protocol state.
 
+GitHub Actions now runs locked dependency checks, Clippy, and the unit/integration suite on pushes and pull requests. The HTTP integration harness uses an isolated temporary SQLite database; broader database-backed API coverage remains a follow-up.
+
 The most valuable near-term work is operational reliability. Product features such as scheduled messages, templates, polls, rich interactive messages, SDKs, and distributed deployment remain deferred until a concrete need exists. SQLite remains the default local store. Turso may be evaluated through a compatibility prototype before adoption.
 
 ## Findings and implementation status

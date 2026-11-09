@@ -1,17 +1,17 @@
-# UWAH Architecture Vision
+# Architecture Overview
 
-UWAH is a self-hosted WhatsApp gateway written in Rust. It exposes HTTP/REST and gRPC interfaces, manages WhatsApp sessions through `whatsapp-rust`, persists application data in SQLite, and provides event streams and optional webhooks.
+Uwah is a single-process WhatsApp gateway written in Rust. It manages WhatsApp sessions and exposes REST, gRPC, and live event-streaming interfaces. Application data is stored in SQLite; WhatsApp protocol state is maintained separately by `whatsapp-rust` for each session.
 
-## Scope
+## Product boundaries
 
-The gateway manages sessions, translates API operations, and stores local application data. It is not a CRM or a distributed database. SQLite is the default storage engine; any alternative requires a compatibility prototype and a concrete deployment need.
+Uwah provides a gateway and local persistence layer. It is not a CRM, a distributed database, or a durable event replay service. SQLite remains the default application store. Alternative storage or distributed components require a demonstrated deployment need and a compatibility prototype.
 
-## Current components
+## Core components
 
-- Axum REST API and browser pairing portal.
-- Tonic gRPC services with bearer-token authentication.
-- `SessionManager` with supervised bot workers and cancellation.
-- SQLite application database and separate per-session protocol stores.
-- Broadcast events, SSE, WebSockets, gRPC streaming, and an optional transactional webhook outbox/DLQ.
+- Axum HTTP API, browser-based QR pairing page, SSE, and WebSockets.
+- Tonic gRPC services defined under `proto/uwah/v1/`.
+- `SessionManager` for worker startup, deduplication, and shutdown.
+- SQLx-managed application database and per-session library-managed protocol stores.
+- In-process event broadcast and optional persistent webhook outbox/DLQ.
 
-See [the architecture guide](../../docs/ARCHITECTURE.md), [the API reference](../../docs/API.md), and [the roadmap](../../docs/ROADMAP.md) for current details.
+See [Architecture](../../docs/ARCHITECTURE.md), [REST API](../../docs/API.md), and the [roadmap](../../docs/ROADMAP.md).

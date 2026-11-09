@@ -1,202 +1,145 @@
-# Uwah WhatsApp Gateway — Complete REST & Real-Time API Reference
+# REST API Reference
 
-## 1. Authentication & Security Model
+The HTTP API is served on `[service].host:[service].port` (default port `6767`). The live OpenAPI document and Swagger UI are generated from the API implementation.
 
-All API endpoints (except public health probes `/health*`, `/metrics`, and the visual scan portal) require authentication via `Authorization: Bearer <TOKEN>`.
+- Swagger UI: `/swagger`
+- OpenAPI JSON: `/api-docs/openapi.json`
 
-### Authentication Rules
-1. **Bearer Header (Recommended)**:
-   ```http
-   Authorization: Bearer <AUTH_TOKEN>
-   ```
-2. **Query Parameter (Restricted to Web UI / Scan Portal)**:
-   ```http
-   GET /swagger?key=<AUTH_TOKEN>
-   GET /sessions/{id}/scan?token=<AUTH_TOKEN>
-   ```
+Use the generated OpenAPI document as the source of truth for request schemas and response models. This page summarizes the routes and operational behavior.
 
----
+## Security and authentication
 
-## 2. Interactive Swagger UI & OpenAPI 3.1 Spec
+Protected routes require:
 
-- **Swagger UI**: `http://127.0.0.1:6767/swagger`
-- **OpenAPI 3.1 JSON Schema**: `http://127.0.0.1:6767/api-docs/openapi.json`
-
----
-
-## 3. Real-Time Streaming & Transports
-
-### Server-Sent Events (SSE)
-- `GET /events` — Global multi-session real-time event stream (`text/event-stream`).
-- `GET /sessions/{id}/events` — Session-scoped real-time event stream.
-- Includes automatic 15-second keep-alive heartbeats (`: ping\n\n`).
-
-### Full-Duplex WebSockets (`uwah.v1+json`)
-- `GET /ws` — Global bidirectional WebSocket.
-- `GET /sessions/{id}/ws` — Session-scoped bidirectional WebSocket.
-
----
-
-## 4. Endpoints Index & Category Matrix
-
-### 4.1 Observability, SRE & Health Probes
-| Method | Route | Description | Status Code |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/health` | General database and gateway connectivity check | `200 OK` / `503 Service Unavailable` |
-| `GET` | `/health/live` | Zero-overhead event-loop liveness probe (K8s) | `200 OK` |
-| `GET` | `/health/ready` | Deep readiness check (DB pool, storage volume, active workers) | `200 OK` / `503 Service Unavailable` |
-| `GET` | `/health/startup` | Startup probe validating database migration readiness | `200 OK` / `503 Service Unavailable` |
-| `GET` | `/metrics` | Prometheus SRE metrics exporter (`text/plain; version=0.0.4`) | `200 OK` |
-
----
-
-### 4.2 Multi-Session Lifecycle Management
-| Method | Route | Description | Status Code |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/sessions` | List all configured sessions and their status | `200 OK` |
-| `POST` | `/sessions` | Create and initialize a new WhatsApp bot session | `201 Created` |
-| `GET` | `/sessions/{id}` | Get details of a specific session | `200 OK` / `404 Not Found` |
-| `DELETE` | `/sessions/{id}` | Unregister and cleanly purge session and `.db` files | `204 No Content` |
-| `POST` | `/sessions/{id}/qr` | Request a fresh QR code payload | `200 OK` |
-| `POST` | `/sessions/{id}/restart` | Restart bot worker and reconnect socket | `200 OK` |
-| `POST` | `/sessions/{id}/logout` | Unlink WhatsApp account from session | `200 OK` |
-| `POST` | `/sessions/{id}/pairing-code` | Request an 8-character phone pairing code | `200 OK` |
-| `GET` | `/sessions/{id}/scan` | Standalone Maud + HTMX vector QR pairing web page | `200 OK` |
-| `GET` | `/sessions/{id}/qr-frame` | HTMX polling fragment for pairing screen | `200 OK` / `286 Stopped` |
-
----
-
-### 4.3 Presence & Global Availability
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `POST` | `/sessions/{id}/presence` | Set session online (`available: true`) or offline (`available: false`) |
-| `POST` | `/sessions/{id}/chats/{jid}/presence` | Send typing indicator (`composing`, `recording`, `paused`) |
-
----
-
-### 4.4 Chats & Conversation Threads
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET` | `/sessions/{id}/chats` | List chats with limit/offset pagination |
-| `GET` | `/sessions/{id}/chats/{jid}` | Get details for a specific chat thread |
-| `DELETE` | `/sessions/{id}/chats/{jid}` | Delete chat thread from local database |
-| `POST` | `/sessions/{id}/chats/{jid}/read` | Mark conversation as read / unread and send read receipt |
-| `POST` | `/sessions/{id}/chats/{jid}/mute` | Mute or unmute chat with optional duration |
-| `POST` | `/sessions/{id}/chats/{jid}/pin` | Pin or unpin chat in conversation list |
-| `POST` | `/sessions/{id}/chats/{jid}/archive` | Archive or unarchive chat |
-| `PATCH` | `/sessions/{id}/chats/{jid}/subject` | Set group/chat title subject |
-| `PATCH` | `/sessions/{id}/chats/{jid}/description` | Set group/chat description |
-| `PUT` | `/sessions/{id}/chats/{jid}/settings/ephemeral` | Configure disappearing messages timer (0, 86400, 604800, 7776000s) |
-| `PUT` | `/sessions/{id}/chats/{jid}/settings/announcement` | Restrict sending messages to admins only |
-| `PUT` | `/sessions/{id}/chats/{jid}/settings/lock` | Restrict modifying group info to admins only |
-| `GET` | `/sessions/{id}/chats/{jid}/invite-code` | Retrieve or reset group invite link |
-| `POST` | `/sessions/{id}/chats/{jid}/leave` | Cause the bot to leave the group |
-
----
-
-### 4.5 Group Administration Plane
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `POST` | `/sessions/{id}/groups` | Create a new WhatsApp group |
-| `POST` | `/sessions/{id}/groups/join` | Join group via invite link or code |
-| `GET` | `/sessions/{id}/chats/{jid}/participants` | List participants of a group |
-| `POST` | `/sessions/{id}/chats/{jid}/participants` | Add participants to a group |
-| `DELETE` | `/sessions/{id}/chats/{jid}/participants/{user_jid}` | Remove a participant from a group |
-| `POST` | `/sessions/{id}/chats/{jid}/participants/promote` | Promote participants to group administrator |
-| `POST` | `/sessions/{id}/chats/{jid}/participants/demote` | Demote administrators to regular members |
-
----
-
-### 4.6 Messages Transmission & History
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET` | `/sessions/{id}/chats/{jid}/messages` | Keyset-paginated message history |
-| `POST` | `/sessions/{id}/chats/{jid}/messages` | Send text or reply quote message |
-| `POST` | `/sessions/{id}/chats/{jid}/messages/location` | Send geographic coordinates location card |
-| `POST` | `/sessions/{id}/chats/{jid}/messages/contact` | Send vCard contact business card |
-| `POST` | `/sessions/{id}/chats/{jid}/messages/media` | Upload and transmit media (image, audio, video, document, sticker) |
-| `PATCH` | `/sessions/{id}/chats/{jid}/messages/{msg_id}` | Edit text message within WhatsApp 15-minute window |
-| `POST` | `/sessions/{id}/chats/{jid}/messages/{msg_id}/reaction` | React to message with emoji (or remove reaction) |
-| `POST` | `/sessions/{id}/chats/{jid}/messages/{msg_id}/revoke` | Revoke / delete message for everyone |
-| `DELETE` | `/sessions/{id}/chats/{jid}/messages/{msg_id}` | Delete message record from local storage |
-
----
-
-### 4.7 Contacts & Address Book
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET` | `/sessions/{id}/contacts` | List synchronized contacts |
-| `POST` | `/sessions/{id}/contacts` | Upsert contact information |
-| `POST` | `/sessions/{id}/contacts/sync` | Trigger on-demand contact synchronization |
-| `POST` | `/sessions/{id}/contacts/check` | Check if phone numbers exist on WhatsApp |
-| `GET` | `/sessions/{id}/contacts/{jid}` | Get contact profile by JID |
-| `DELETE` | `/sessions/{id}/contacts/{jid}` | Delete contact record |
-| `GET` | `/sessions/{id}/contacts/{jid}/profile-picture` | Fetch high-resolution avatar URL |
-| `POST` | `/sessions/{id}/contacts/{jid}/block` | Block contact |
-| `POST` | `/sessions/{id}/contacts/{jid}/unblock` | Unblock contact |
-
----
-
-### 4.8 Media Cache & Downloads
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET` | `/sessions/{id}/media/{sha256}` | Download decrypted binary media file with HTTP caching (`ETag`, `304`) |
-| `POST` | `/sessions/{id}/media/upload` | Pre-upload media binary to server cache |
-
----
-
-### 4.9 Voice & Video Call Signaling
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET` | `/sessions/{id}/calls` | List call history records |
-| `GET` | `/sessions/{id}/calls/{call_id}` | Get call details |
-| `DELETE` | `/sessions/{id}/calls/{call_id}` | Delete call record |
-| `POST` | `/sessions/{id}/calls/{call_id}/reject` | Reject inbound call offer on protocol level and dispatch webhook |
-
----
-
-### 4.10 Webhook Dead-Letter Queue (DLQ)
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET` | `/webhooks/dlq` | List all dead-lettered webhook events |
-| `GET` | `/webhooks/dlq/{id}` | Inspect quarantined dead-letter entry |
-| `POST` | `/webhooks/dlq/{id}/replay` | Requeue single quarantined webhook for retry |
-| `POST` | `/webhooks/dlq/replay-all` | Requeue all dead-lettered events |
-| `DELETE` | `/webhooks/dlq/{id}` | Purge quarantined event |
-
----
-
-## 5. gRPC Microservices Interconnect API
-
-The gateway also provides a gRPC API on `service.port + 1` (default: `6768`). Its surface overlaps with REST, but feature support is not guaranteed to match one-to-one. See [the gRPC reference](GRPC.md) for the available services and methods.
-
-For the comprehensive gRPC reference guide, error mappings, proto schemas, and `grpcurl` examples, see **[`docs/GRPC.md`](GRPC.md)**.
-
-### 5.1 gRPC Server Reflection
-The server enables **gRPC Server Reflection Protocol v1** (`tonic-reflection`), allowing dynamic service discovery and inspection without requiring local `.proto` files:
-```bash
-grpcurl -plaintext 127.0.0.1:6768 list
-grpcurl -plaintext 127.0.0.1:6768 describe uwah.v1.SessionService
+```http
+Authorization: Bearer <service-token>
 ```
 
-### 5.2 gRPC Authentication
-All gRPC RPC methods require metadata authentication using the same secret configured in `uwah.toml` under `[service].auth` (supporting plaintext or SHA-256 hex digest):
+The service token is configured as `[service].auth`. It may contain the token directly or its SHA-256 hexadecimal digest. Health routes and `/metrics` do not require authentication. The scan portal and Swagger UI support browser-oriented query credentials; the scan page accepts `?token=`, and Swagger accepts `?key=` or `?token=`. Query tokens may be recorded in browser history, access logs, and telemetry. Do not expose them in shared links.
 
-- **Metadata Header**: `authorization: Bearer <TOKEN>`
-- **Error Behavior**: Missing, invalid, empty, or non-`Bearer ` metadata immediately returns gRPC status `Status::unauthenticated("unauthenticated")`.
-- **Transport Security**: gRPC does not terminate TLS internally; tokens should be transported over an encrypted channel (TLS reverse proxy / ingress) or a secure internal private network.
+The HTTP server does not terminate TLS. Use a trusted reverse proxy or secure tunnel for traffic over untrusted networks.
 
-### 5.3 Services Index (11 Tonic Services)
-1. **`uwah.v1.HealthService`**: Health probes (`Check`, `Watch`, `CheckLiveness`, `CheckReadiness`, `CheckStartup`) and `ExportMetrics`.
-2. **`uwah.v1.EventStreamService`**: Real-time event streaming (`StreamEvents`) with optional session filtering.
-3. **`uwah.v1.SessionService`**: Session lifecycle (`ListSessions`, `CreateSession`, `GetSession`, `DeleteSession`, `RefreshQr`, `RestartSession`, `LogoutSession`, `RequestPairingCode`).
-4. **`uwah.v1.ChatService`**: Chat presence, conversations, pins, mutes, archives, ephemeral settings, group metadata, and invite links.
-5. **`uwah.v1.GroupService`**: Group creation (`CreateGroup`) and joining (`JoinGroup`).
-6. **`uwah.v1.GroupParticipantService`**: Participant operations (`ListParticipants`, `AddParticipants`, `RemoveParticipant`, `PromoteParticipants`, `DemoteParticipants`).
-7. **`uwah.v1.MessageService`**: Messages transmission (`SendMessage`, `SendLocation`, `SendContact`, `SendMedia`, `EditMessage`, `DeleteMessage`, `ReactMessage`, `RevokeMessage`, `ListMessages`).
-8. **`uwah.v1.ContactService`**: Address book (`ListContacts`, `UpsertContact`, `SyncContacts`, `CheckContacts`, `GetContact`, `DeleteContact`, `GetProfilePicture`, `BlockContact`, `UnblockContact`).
-9. **`uwah.v1.CallService`**: Call logs and signaling (`ListCalls`, `GetCall`, `DeleteCall`, `RejectCall`).
-10. **`uwah.v1.MediaService`**: Chunked media downloads (`DownloadMedia`), chunked streaming uploads (`UploadMedia`), and unary uploads (`UploadMediaUnary`).
-11. **`uwah.v1.WebhookDlqService`**: Dead-letter queue inspection and replays (`ListDlq`, `GetDlq`, `ReplayDlq`, `ReplayAllDlq`, `DeleteDlq`).
+## Health and metrics
 
+| Method | Path | Authentication | Behavior |
+| --- | --- | --- | --- |
+| `GET` | `/health` | Public | Checks database connectivity. |
+| `GET` | `/health/live` | Public | Confirms that the HTTP process is responsive. |
+| `GET` | `/health/ready` | Public | Checks database connectivity and media-directory accessibility; reports active sessions. |
+| `GET` | `/health/startup` | Public | Checks that the application database schema is initialized. |
+| `GET` | `/metrics` | Public | Exports Prometheus text metrics. |
 
+The readiness response is successful when database and storage checks pass. The active-session count is informational and does not determine readiness.
+
+## Session lifecycle and pairing
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/sessions` | List stored sessions. |
+| `POST` | `/sessions` | Create a session and attempt to start its WhatsApp worker. |
+| `GET` | `/sessions/{id}` | Retrieve a session. |
+| `DELETE` | `/sessions/{id}` | Stop and remove a session and its protocol-store files. |
+| `POST` | `/sessions/{id}/qr` | Update the session QR payload. |
+| `POST` | `/sessions/{id}/restart` | Restart the session worker. |
+| `POST` | `/sessions/{id}/logout` | Log the session out. |
+| `POST` | `/sessions/{id}/pairing-code` | Request a phone-number pairing code. |
+| `GET` | `/sessions/{id}/scan` | Render the browser pairing page. |
+| `GET` | `/sessions/{id}/qr-frame` | Render the HTMX polling fragment; returns status `286` when connected. |
+
+Session identifiers must contain 1–64 ASCII letters, digits, underscores, or hyphens and cannot be Windows reserved device names. Creating a session can contact WhatsApp and create persistent protocol state.
+
+## Chats, presence, and groups
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/sessions/{id}/presence` | Set global session availability. |
+| `GET` | `/sessions/{id}/chats` | List chats. |
+| `GET`, `DELETE` | `/sessions/{id}/chats/{jid}` | Retrieve or delete a chat record. |
+| `POST` | `/sessions/{id}/chats/{jid}/read` | Mark a chat as read. |
+| `POST` | `/sessions/{id}/chats/{jid}/mute` | Mute or unmute a chat. |
+| `POST` | `/sessions/{id}/chats/{jid}/pin` | Pin or unpin a chat. |
+| `POST` | `/sessions/{id}/chats/{jid}/archive` | Archive or unarchive a chat. |
+| `POST` | `/sessions/{id}/chats/{jid}/presence` | Set chat state such as composing or recording. |
+| `PATCH` | `/sessions/{id}/chats/{jid}/subject` | Update a group subject. |
+| `PATCH` | `/sessions/{id}/chats/{jid}/description` | Update a group description. |
+| `PUT` | `/sessions/{id}/chats/{jid}/settings/ephemeral` | Set the disappearing-message timer. |
+| `PUT` | `/sessions/{id}/chats/{jid}/settings/announcement` | Set group announcement mode. |
+| `PUT` | `/sessions/{id}/chats/{jid}/settings/lock` | Set group edit restrictions. |
+| `GET` | `/sessions/{id}/chats/{jid}/invite-code` | Retrieve or reset a group invite link. |
+| `POST` | `/sessions/{id}/chats/{jid}/leave` | Leave a group. |
+| `POST` | `/sessions/{id}/groups` | Create a group. |
+| `POST` | `/sessions/{id}/groups/join` | Join a group using an invite code or link. |
+| `GET`, `POST` | `/sessions/{id}/chats/{jid}/participants` | List or add group participants. |
+| `DELETE` | `/sessions/{id}/chats/{jid}/participants/{user_jid}` | Remove a participant. |
+| `POST` | `/sessions/{id}/chats/{jid}/participants/promote` | Promote participants. |
+| `POST` | `/sessions/{id}/chats/{jid}/participants/demote` | Demote participants. |
+
+## Messages
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET`, `POST` | `/sessions/{id}/chats/{jid}/messages` | List message history or send a text message. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/location` | Send a location. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/contact` | Send a contact card. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/media` | Send media. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/sticker` | Send a sticker. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/sticker-pack` | Send a sticker pack. |
+| `PATCH` | `/sessions/{id}/chats/{jid}/messages/{msg_id}` | Edit a message. |
+| `DELETE` | `/sessions/{id}/chats/{jid}/messages/{msg_id}` | Delete the local message record. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/{msg_id}/reaction` | Add or remove a reaction. |
+| `POST` | `/sessions/{id}/chats/{jid}/messages/{msg_id}/revoke` | Revoke a message for participants, subject to WhatsApp restrictions. |
+
+Text-message requests accept a `body`; quoted replies can include `quoted_message_id`. Message sending requires an active session and may be subject to WhatsApp-side restrictions. A successful API response cannot guarantee delivery to the recipient.
+
+## Contacts and calls
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET`, `POST` | `/sessions/{id}/contacts` | List or upsert contacts. |
+| `POST` | `/sessions/{id}/contacts/sync` | Synchronize contacts from the session. |
+| `POST` | `/sessions/{id}/contacts/check` | Check phone numbers through WhatsApp. |
+| `GET`, `DELETE` | `/sessions/{id}/contacts/{jid}` | Retrieve or delete a contact. |
+| `GET` | `/sessions/{id}/contacts/{jid}/profile-picture` | Retrieve a cached or remote profile picture. |
+| `POST` | `/sessions/{id}/contacts/{jid}/block` | Block a contact. |
+| `POST` | `/sessions/{id}/contacts/{jid}/unblock` | Unblock a contact. |
+| `GET` | `/sessions/{id}/calls` | List call records. |
+| `GET`, `DELETE` | `/sessions/{id}/calls/{call_id}` | Retrieve or delete a call record. |
+| `POST` | `/sessions/{id}/calls/{call_id}/reject` | Reject an incoming call. |
+
+## Media
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/sessions/{id}/media/{sha256}` | Retrieve cached media. Supports byte ranges. |
+| `POST` | `/sessions/{id}/media/upload` | Upload media into the local cache. |
+
+Media is subject to `[media].max_file_size`. Cache retention and concurrency settings are configurable in `uwah.toml`. The server validates media paths against the configured cache root.
+
+## Events and streaming
+
+| Method | Path | Transport |
+| --- | --- | --- |
+| `GET` | `/events` | Server-Sent Events (global stream) |
+| `GET` | `/sessions/{id}/events` | Server-Sent Events (session-filtered stream) |
+| `GET` | `/ws` | WebSocket (global stream) |
+| `GET` | `/sessions/{id}/ws` | WebSocket (session-filtered stream) |
+
+These routes are protected by the shared Bearer token. Events use an in-process broadcast channel; they are not a durable event log, and disconnected consumers may miss events. SSE streams send periodic keep-alive comments. WebSocket clients receive JSON event envelopes. See [Architecture](ARCHITECTURE.md#events-and-webhooks) for delivery distinctions.
+
+## Webhook dead-letter queue
+
+All routes require authentication.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/webhooks/dlq` | List quarantined webhook events. |
+| `GET` | `/webhooks/dlq/{id}` | Retrieve one quarantined event. |
+| `POST` | `/webhooks/dlq/{id}/replay` | Requeue an event for delivery. |
+| `POST` | `/webhooks/dlq/replay-all` | Requeue all eligible events. |
+| `DELETE` | `/webhooks/dlq/{id}` | Permanently delete a DLQ entry. |
+
+Delivery signatures, retry behavior, and operational guidance are documented in [Webhooks](WEBHOOKS.md).
+
+## gRPC
+
+The gRPC API listens on `service.port + 1`. It has overlapping, but not identical, functionality. See the [gRPC reference](GRPC.md) and the source contracts in [`proto/uwah/v1/`](../proto/uwah/v1/).

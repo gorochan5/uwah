@@ -1,7 +1,7 @@
-# Database Interactions
+# Database Access Patterns
 
-`src/database/mod.rs` loads the configured SQLite URL, enables foreign keys, WAL mode, `synchronous=NORMAL`, a 30-second busy timeout, and the configured cache pragmas. SQLx applies embedded migrations during startup. The pool allows up to five connections.
+The application database is accessed through SQLx pools and the modules under `src/repository/`. HTTP and gRPC handlers use these repositories for gateway records; WhatsApp protocol stores are owned by the WhatsApp library and accessed through its client and storage abstractions.
 
-Repositories in `src/repository/` encapsulate application queries. Inbound message handling can persist message state and enqueue webhook events transactionally. The periodic maintenance worker performs a passive WAL checkpoint and incremental vacuum.
+Several message, contact, and media operations use batch queries or transactions. Webhook events may be enqueued in the same transaction as the state change that produced them. The exact query behavior is defined in repository code and migrations.
 
-Do not access the database directly during repository work. Consult [the database guide](../../../docs/DATABASE.md) and the migration files.
+See [Database and migrations](../../../docs/DATABASE.md) for persistence boundaries, migration caveats, and SQLite settings.

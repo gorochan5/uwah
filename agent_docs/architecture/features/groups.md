@@ -1,5 +1,5 @@
 # Groups
 
-The API exposes group creation/joining and participant listing and management. Chat handlers also expose supported group settings. Operations depend on WhatsApp permissions, current protocol support, and the capabilities implemented by the library.
+The API supports group creation and joining, participant listing and management, and supported group-setting operations such as subject, description, announcement mode, and edit restrictions. Actions are performed through the active WhatsApp session; available changes depend on the account's role and WhatsApp behavior.
 
-Do not assume that a `group_metadata` table exists in every deployment: its historical migration file is empty in this checkout. See [the database guide](../../../docs/DATABASE.md), [the API reference](../../../docs/API.md), and [the gRPC reference](../../../docs/GRPC.md).
+Group metadata persistence is subject to the checked-in migration history. See [Database and migrations](../../../docs/DATABASE.md) before assuming a specific local schema. API routes are listed in the [REST API](../../../docs/API.md) and [gRPC API](../../../docs/GRPC.md) references.

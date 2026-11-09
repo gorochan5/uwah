@@ -1,126 +1,68 @@
-# Uwah Architecture
+# Architecture
 
-## 1. Overview
+Uwah is a single-process gateway that connects client applications to WhatsApp through the `whatsapp-rust` library. Axum serves the HTTP API and pairing pages; Tonic serves the gRPC API. SQLx manages application data in SQLite, while the WhatsApp library owns each session's protocol store.
 
-**Uwah** is a self-hosted, high-performance WhatsApp gateway written in Rust. It decouples client-facing applications from the underlying WhatsApp multi-device binary protocol using [`whatsapp-rust`](https://github.com/oxidezap/whatsapp-rust), Axum 0.8, and SQLite (SQLx).
+## System overview
 
----
+```text
+HTTP clients ── REST / SSE / WebSocket ──┐
+                                         ├── AppState ── repositories ── SQLite application DB
+gRPC clients ── Tonic services ──────────┘       │
+                                                 ├── SessionManager ── WhatsApp workers
+                                                 ├── Event broadcast bus
+                                                 └── Outbox worker ── configured webhook receiver
 
-## 2. High-Level Architecture
-
-```
-                      ┌────────────────────────────┐
-                      │    HTTP Clients / Browsers │
-                      └─────────────┬──────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                              Axum 0.8                                  │
-│  ┌─────────────────────────┬───────────────────┬────────────────────┐  │
-│  │   Protected REST API    │   Maud + HTMX     │     Swagger UI     │  │
-│  │  (/sessions, /chats...) │ (/sessions/:id/   │   (/swagger?key=)  │  │
-│  │  (Bearer Auth Token)    │      scan)        │   (OpenAPI 3.1)    │  │
-│  └────────────┬────────────┴─────────┬─────────┴──────────┬─────────┘  │
-│               │                      │                    │            │
-│               └──────────────────────┼────────────────────┘            │
-│                                      ▼                                 │
-│                         ┌─────────────────────────┐                    │
-│                         │        AppState         │                    │
-│                         │ - &'static Config       │                    │
-│                         │ - SqlitePool (uwah.db)  │                    │
-│                         │ - Arc<SessionManager>   │                    │
-│                         └────────────┬────────────┘                    │
-└──────────────────────────────────────┼─────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                        SessionManager Layer                            │
-│           (Registry of Active WhatsApp Bots: HashMap<ID, Arc<Client>>)  │
-│                                                                        │
-│   ┌──────────────────────────┐        ┌──────────────────────────┐     │
-│   │    WhatsApp Session A    │        │    WhatsApp Session B    │     │
-│   │   - Bot / Client Worker  │        │   - Bot / Client Worker  │     │
-│   │   - Background Tokio Task│        │   - Background Tokio Task│     │
-│   │   - on_message handler   │        │   - on_message handler   │     │
-│   │   - on_qr_code handler   │        │   - on_qr_code handler   │     │
-│   │   - on_connected handler │        │   - on_connected handler │     │
-│   └────────────┬─────────────┘        └────────────┬─────────────┘     │
-└────────────────┼───────────────────────────────────┼───────────────────┘
-                 │                                   │
-                 ▼                                   ▼
-      ┌─────────────────────┐             ┌─────────────────────┐
-      │  sessions/{id_a}.db │             │  sessions/{id_b}.db │
-      │ (Signal Keys Store) │             │ (Signal Keys Store) │
-      └─────────────────────┘             └─────────────────────┘
-                 │                                   │
-                 └─────────────────┬─────────────────┘
-                                   ▼
-                         ┌───────────────────┐
-                         │      uwah.db      │
-                         │(Gateway App State)│
-                         └───────────────────┘
+Browser ── QR pairing page ── SessionManager
+Each WhatsApp worker ── isolated protocol store under [sessions].dir
 ```
 
----
+The gateway and session protocol stores are distinct persistence domains:
 
-## 3. Dual-Database Storage Design
+- **Application database:** configured by `[database].dir`; stores session metadata, chats, messages, contacts, calls, media-cache metadata, and webhook outbox/DLQ data.
+- **Protocol stores:** configured by `[sessions].dir`; one library-managed store per WhatsApp session contains credentials and cryptographic protocol state. Application repositories do not query these stores.
 
-To guarantee cryptographic integrity and complete isolation between sessions, **Uwah strictly enforces a dual-database architecture**:
+See [Database and migrations](DATABASE.md) for the schema contract and caveats.
 
-### A. Application State Database (`uwah.db`)
-- **Engine**: SQLite managed by SQLx (`sqlx::SqlitePool`).
-- **Configuration**: Configured via `uwah.toml` under `[database] dir`.
-- **Concurrency**: Operates in **WAL mode** (`PRAGMA journal_mode = WAL`), `synchronous = NORMAL`, `foreign_keys = ON`, and **`busy_timeout = 30s`**.
-- **Contents**:
-  - `sessions`: Session registry (status, phone number, push name, active QR payload).
-  - `chats`: Conversation threads (direct, group, newsletter).
-  - `messages`: Inbound and outbound message records, status (`sent`, `received`), timestamps, reply context.
-  - `contacts`: Address book, LID-to-Phone mappings, verified names.
-  - `group_participants`: Membership tracking and admin permissions.
-  - `calls`: Audio/video call history.
-  - `media_cache`: Local file cache deduplication.
+## Process lifecycle
 
-### B. Session Protocol Stores (`sessions/{id}.db`)
-- **Engine**: SQLite managed internally by `whatsapp-rust-sqlite-storage` (Diesel + r2d2).
-- **Configuration**: Root directory configured via `uwah.toml` under `[sessions] dir`.
-- **Purpose**: Exclusively holds low-level WhatsApp protocol state: Signal prekeys, identity keys, sender keys, Noise handshake secrets, and app state sync keys.
-- **Isolation**: Each connected WhatsApp number receives its own dedicated `.db` file. The application code never queries or mutates this file directly.
+At startup, `main` initializes logging, loads and validates `uwah.toml`, opens the SQLite pool, and applies embedded SQLx migrations. It creates shared application state and restores persisted sessions marked `CONNECTED`, subject to a concurrency limit. It then starts the outbox and database-maintenance tasks, starts gRPC on `service.port + 1`, binds the HTTP listener, and serves requests.
 
----
+On HTTP shutdown, the process cancels and joins the gRPC, outbox, and maintenance tasks, stops active WhatsApp workers, and closes the application database pool. Shutdown is coordinated, but no fixed deadline is currently enforced.
 
-## 4. Concurrency & Lifecycle Management
+## Session lifecycle
 
-1. **Static Configuration**:
-   Loaded once at boot using `OnceLock<Config>`. Exposed to all handlers via `&'static Config` (zero heap allocations per request).
-2. **Background Session Worker**:
-   `SessionManager` boots an async `Bot` and retains a supervised worker handle with a cancellation token. Unexpected worker termination removes the session from the active registry. Explicit stop cancels and joins the worker.
-3. **Inbound Event Processing**:
-   The registered event callback dispatches incoming WhatsApp events to the event handlers. Message handlers persist message and chat state and enqueue webhook events transactionally where supported. Exact extraction and persistence behavior is implemented by the event handlers and repositories.
-4. **Outbound Messaging Pipeline**:
-   The REST API retrieves the `Arc<Client>` from `SessionManager`, builds a WhatsApp `wa::Message` (with `ContextInfo` when `quoted_message_id` is present), and dispatches asynchronously through WhatsApp's encrypted channel.
+`SessionManager` tracks workers in memory and deduplicates concurrent startup attempts. A worker owns a WhatsApp client, cancellation token, and task handle. Stopping a session cancels the worker and disconnects the client; unexpected worker completion removes its active entry. Session metadata remains in the application database independently of in-memory worker state.
 
-## 5. Event and delivery paths
+Creating or restarting a session can establish network connections to WhatsApp and create or modify protocol-store files. These operations should be treated as external side effects.
 
-Gateway events are published to an in-process broadcast bus and can be consumed through:
+## Request and event flow
 
-- HTTP SSE at `/events` or `/sessions/{id}/events`;
-- HTTP WebSocket at `/ws` or `/sessions/{id}/ws`;
-- gRPC `EventStreamService.StreamEvents`, optionally filtered by `session_id`.
+Protected HTTP routes pass through Bearer-token middleware. gRPC services use a Tonic interceptor with the same configured service credential. Handlers validate request data, use a running session client for WhatsApp operations, and use repository modules for application persistence.
 
-Configured webhooks are delivered through a transactional outbox worker. Failed deliveries are retried and eventually moved to `webhook_dlq`, which is operable through the protected `/webhooks/dlq` endpoints as well as the gRPC `WebhookDlqService`. See [WEBHOOKS.md](WEBHOOKS.md).
+Inbound WhatsApp events are dispatched to domain handlers. Handlers may update the application database, publish a `GatewayEvent`, and enqueue a webhook event. The in-process event bus feeds SSE, WebSocket, and gRPC streams. This broadcast bus is bounded and non-durable; consumers can miss events while disconnected or when they fall behind the buffer.
 
-## 6. gRPC Microservices Subsystem
+## Events and webhooks
 
-Uwah exposes a gRPC endpoint on `service.port + 1` (default `6768`) across 11 Tonic services. Its surface overlaps with REST but is not guaranteed to have complete one-to-one feature parity:
-- **Service Discovery**: Enabled via gRPC Server Reflection Protocol v1 (`tonic-reflection`), allowing dynamic inspection with `grpcurl` or GUI clients.
-- **Service Modules**: `HealthService`, `EventStreamService`, `SessionService`, `ChatService`, `GroupService`, `GroupParticipantService`, `MessageService`, `ContactService`, `CallService`, `MediaService`, and `WebhookDlqService`.
-- **Media & Event Streaming**: Native HTTP/2 chunked streaming for both file downloads (`64KB` chunks) and upload pipelines, as well as real-time event broadcasting.
-- See detailed protocol specs in [docs/GRPC.md](GRPC.md).
+Live event transports:
 
-## 7. Operational boundaries
+- HTTP Server-Sent Events: `/events` and `/sessions/{id}/events`.
+- HTTP WebSockets: `/ws` and `/sessions/{id}/ws`.
+- gRPC server stream: `uwah.v1.EventStreamService/StreamEvents`.
 
-REST protected routes require a Bearer token. Swagger and the scan portal have browser-specific query-token handling. The gRPC server is protected by a Tonic metadata interceptor requiring `authorization: Bearer <token>` validated against `[service].auth` in constant time (returning `unauthenticated` on any failure). Neither HTTP nor gRPC listeners configure TLS internally (TLS termination should be handled by a reverse proxy or ingress).
+Webhook delivery follows a separate persistent path. Events are written to the outbox and dispatched by a background worker. Failed attempts are scheduled for retry; permanently rejected or exhausted events move to the DLQ. Successful outbox rows are deleted. Delivery is at-least-once, so webhook consumers should deduplicate by event ID. See [Webhook delivery](WEBHOOKS.md).
 
-The startup probe confirms that the `sessions` table can be queried. The readiness probe checks database connectivity and the configured media directory. It also reports active session count; that count does not determine readiness.
+## Network interfaces
 
+The HTTP listener uses `[service].host` and `[service].port`; the gRPC listener uses the next port. REST and gRPC do not terminate TLS internally. Place both behind a trusted TLS-capable proxy or use a secure tunnel when remote access is required.
 
+The HTTP server exposes health probes and metrics, authenticated API routes, the scan portal, and Swagger UI. The gRPC server exposes the services defined in `proto/uwah/v1/` and enables Server Reflection v1. REST and gRPC feature parity is not guaranteed.
+
+## Operational endpoints
+
+- `/health`: database connectivity.
+- `/health/live`: process liveness.
+- `/health/ready`: database and media-directory accessibility, plus an informational active-session count.
+- `/health/startup`: application schema availability.
+- `/metrics`: basic Prometheus text metrics.
+
+The active-session count does not determine readiness. See [REST API](API.md) and [gRPC API](GRPC.md) for protocol details.

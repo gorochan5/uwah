@@ -1,7 +1,7 @@
 # WhatsApp Sessions
 
-Session metadata is stored in the gateway database. Each session's WhatsApp protocol state is isolated in its own library-managed SQLite store. `SessionManager` deduplicates concurrent startup, retains the client and worker handle, and uses a cancellation token for stop.
+Session metadata is stored in the gateway application database. Each session's WhatsApp authentication and protocol state is kept in a separate library-managed store under `[sessions].dir`.
 
-Unexpected bot-worker completion removes the session from the in-memory active registry. Explicit stop disconnects the client and joins its worker. Startup restores persisted sessions marked `CONNECTED`, with a concurrency limit.
+`SessionManager` deduplicates concurrent startup, tracks active clients and worker tasks, and coordinates stop and disconnect operations. At startup, Uwah attempts to restore persisted sessions marked `CONNECTED`, subject to a concurrency limit. Session creation and reconnection require WhatsApp network access.
 
-See [the API reference](../../../docs/API.md) and [the architecture guide](../../../docs/ARCHITECTURE.md).
+See the [REST API](../../../docs/API.md), [architecture guide](../../../docs/ARCHITECTURE.md), and [database guide](../../../docs/DATABASE.md).

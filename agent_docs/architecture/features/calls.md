@@ -1,5 +1,5 @@
-# Calls
+# Call Records and Actions
 
-Call records are stored in the application database and exposed through REST and gRPC list/get/delete operations. The gateway also exposes call rejection/signaling operations supported by the current handlers and `whatsapp-rust` version. This API does not imply that UWAH provides a full voice/video media bridge.
+Uwah stores call records and exposes operations to list, retrieve, and delete them. The API also supports rejecting an incoming call through the active WhatsApp session. It does not provide media transport for voice or video calls.
 
-See [the API reference](../../../docs/API.md) and [the gRPC reference](../../../docs/GRPC.md).
+See the [REST API](../../../docs/API.md) and [gRPC API](../../../docs/GRPC.md) references.

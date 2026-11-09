@@ -1,10 +1,8 @@
 # Storage Structures
 
-UWAH uses two storage tiers:
+Uwah maintains two distinct SQLite-backed persistence domains:
 
-- `uwah.db` stores gateway application data through SQLx and SQLite.
-- `sessions/{id}.db` stores WhatsApp protocol and cryptographic state through the library's SQLite backend.
+1. The configured application database stores gateway metadata and operational records through SQLx.
+2. The configured sessions directory contains one WhatsApp protocol store per session, managed by `whatsapp-rust`.
 
-Application repositories own gateway queries. The application must not directly inspect or mutate per-session protocol databases. Schema changes belong in versioned SQL migrations; preserve checksums of historical migrations that may already have been applied.
-
-See [the database guide](../../../docs/DATABASE.md).
+Keep both domains private, writable by the service account, and outside source control. Back up the application database and matching protocol stores together. Use the [database guide](../../../docs/DATABASE.md) for migration and backup considerations.

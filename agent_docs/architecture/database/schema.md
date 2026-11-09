@@ -1,7 +1,7 @@
 # Database Schema
 
-The application database is SQLite, managed by SQLx. The authoritative schema is the ordered SQL migration set under `migrations/`; do not infer schema objects from roadmap text alone.
+The gateway application database is SQLite, managed by SQLx. The authoritative schema is the ordered migration set in `migrations/`.
 
-The initial migration creates sessions, chats, messages, contacts, group participants, calls, and media cache. The performance migration adds indexes. Three historical migration files are empty in this checkout. A later additive migration creates outbox and DLQ objects when absent. The empty session-cascade and group-metadata migrations remain under review.
+The checked-in migrations define session, chat, message, contact, group-participant, call, and media-cache structures, as well as indexes and webhook outbox/DLQ structures. Some historical migration files are empty in this checkout, so documentation or model definitions alone cannot establish what exists in a newly initialized database. Review the full migration sequence before depending on session-cascade or group-metadata behavior.
 
-See [the database guide](../../../docs/DATABASE.md) for table and pragma details.
+See [Database and migrations](../../../docs/DATABASE.md) for the current details.

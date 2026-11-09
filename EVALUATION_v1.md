@@ -1,6 +1,8 @@
 # UWAH Evaluation — Original Recommendations (English Translation)
 
-This document translates the original evaluation into English. The validated findings and current priorities are maintained separately in [`EVALUATION_v1_validated.md`](EVALUATION_v1_validated.md).
+> **Historical review:** This document preserves the original evaluation and its recommendations. Some findings were later corrected or superseded. For current implementation status and priorities, see [`EVALUATION_v1_validated.md`](EVALUATION_v1_validated.md) and the [roadmap](docs/ROADMAP.md).
+
+This document is an English translation of the original assessment; it is not a description of the current implementation.
 
 ## Overall assessment
 

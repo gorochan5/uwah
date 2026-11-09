@@ -1,7 +1,7 @@
 # Media Cache
 
-Media metadata is stored in the application database and binary files are stored under `[media].dir`. Files are addressed by SHA-256 digest and reused by cache-aware upload/download paths. The configured size limit is enforced for uploads.
+Downloaded media is stored under `[media].dir` and indexed by its SHA-256 hash in the application database. The cache tracks file size, MIME type, reference count, and last-access time. HTTP media retrieval supports byte ranges; upload size and concurrent downloads are configurable.
 
-HTTP and streaming gRPC upload paths create unique temporary files exclusively before streaming bytes to disk. Keep temporary and final files within the configured media directory and preserve canonical-path checks on downloads.
+Expired and unreferenced entries are eligible for pruning according to repository logic. The readiness probe checks that the configured media directory can be created or accessed. Protect cached content and ensure the service account has appropriate filesystem permissions.
 
-See [the database guide](../../../docs/DATABASE.md) and [the API reference](../../../docs/API.md).
+See the [REST API](../../../docs/API.md) and [database guide](../../../docs/DATABASE.md).

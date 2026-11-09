@@ -1,5 +1,5 @@
 # Contacts
 
-Contact records are scoped to a session and stored in the application SQLite database. REST and gRPC handlers support listing, lookup, upsert/synchronization, deletion, profile-picture retrieval, and block/unblock operations where supported by the WhatsApp library.
+Contact data is stored per session in the application database. The API supports listing and upserting contact records, synchronization, identifier lookup, phone-number checks, profile-picture retrieval, and block/unblock actions.
 
-See [the API reference](../../../docs/API.md) and [the gRPC reference](../../../docs/GRPC.md).
+Synchronization and WhatsApp-side actions require an active session. See the [REST API](../../../docs/API.md) and [gRPC API](../../../docs/GRPC.md) references.

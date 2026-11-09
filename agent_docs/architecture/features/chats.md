@@ -1,5 +1,5 @@
 # Chats
 
-Chat records are scoped by session and chat JID. The HTTP and gRPC APIs expose chat listing and supported chat/group operations such as presence, read state, mute, pin, archive, subject/description, ephemeral settings, and invite links. Exact support depends on the handler and WhatsApp library behavior.
+Chat records are scoped to a WhatsApp session and stored in the application database. The API exposes listing, lookup, and deletion alongside operations for read state, mute, pin, archive, presence, and supported group settings.
 
-See [the API reference](../../../docs/API.md) and [the gRPC reference](../../../docs/GRPC.md).
+Operations that change WhatsApp state require an active session and may depend on WhatsApp permissions. Consult the [REST API](../../../docs/API.md) and [gRPC API](../../../docs/GRPC.md) references for available methods.

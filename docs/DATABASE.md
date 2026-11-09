@@ -1,115 +1,54 @@
-# Uwah Database Schema, Relational Integrity & Concurrency Architecture
+# Database and Migrations
 
-## 1. Dual-Tier Storage Isolation
+Uwah uses SQLite for gateway application data. SQLx opens the database at `[database].dir`, enables foreign keys, uses WAL mode, and applies the ordered migrations embedded from `migrations/` during startup. The migration files are the authoritative schema history; this guide describes the current checked-in files and does not replace migration review.
 
-Uwah strictly separates business state from cryptographic stores:
-1. **`uwah.db` (Relational Gateway Database)**: Central application data, contacts, chat histories, messages, outbox events, and group metadata (SQLx + SQLite WAL mode).
-2. **`sessions/{id}.db` (Signal Cryptographic Stores)**: Per-session Noise keys, prekeys, and Double Ratchet state managed by `whatsapp-rust`.
+## Persistence domains
 
----
+### Application database
 
-## 2. Gateway Database Schema (`uwah.db`)
+The configured application database stores data used by the gateway API:
 
-### 2.1 `sessions`
-Tracks WhatsApp multi-session states and lifecycles.
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | TEXT | PRIMARY KEY | Unique sanitized session ID (e.g. `primary_bot`) |
-| `phone_number` | TEXT | NULLABLE | Authenticated user phone number |
-| `push_name` | TEXT | NULLABLE | Profile display push name |
-| `status` | TEXT | NOT NULL DEFAULT `'QRCODE'` | `QRCODE`, `PAIRING_CODE`, `CONNECTED`, `LOGGED_OUT`, `CONFLICT` |
-| `qr_payload` | TEXT | NULLABLE | Vector QR pairing payload |
-| `created_at` | TIMESTAMP | NOT NULL | Record creation timestamp |
-| `updated_at` | TIMESTAMP | NOT NULL | Last update timestamp |
+| Table | Purpose |
+| --- | --- |
+| `sessions` | Session identity, connection status, QR payload, and profile metadata. |
+| `chats` | Per-session chat metadata and state. |
+| `messages` | Per-session message history and delivery metadata. |
+| `contacts` | Contact details and identifier mappings. |
+| `group_participants` | Participant membership and role data. |
+| `calls` | Call records. |
+| `media_cache` | Media hashes, disk paths, sizes, and access metadata. |
+| `outbox_events` | Pending webhook deliveries and retry state. |
+| `webhook_dlq` | Events quarantined after permanent failure or retry exhaustion. |
+| `group_metadata` | Group-level metadata where created by the active schema. |
 
----
+Most application entities are scoped by `session_id`. Refer to the SQL migrations for exact columns, constraints, and indexes.
 
-### 2.2 `outbox_events` (Transactional Outbox)
-Enables reliable at-least-once webhook event delivery.
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | TEXT | PRIMARY KEY | UUIDv7 monotonic event identifier |
-| `session_id` | TEXT | NOT NULL, FK -> `sessions(id)` ON DELETE CASCADE | Owning session ID |
-| `event_type` | TEXT | NOT NULL | Topic name (e.g. `message.received`, `session.connected`) |
-| `aggregate_id` | TEXT | NOT NULL | Aggregate partition key (e.g. `chat_jid`) for FIFO ordering |
-| `payload` | TEXT | NOT NULL | Serialized JSON event envelope |
-| `status` | TEXT | NOT NULL DEFAULT `'pending'` | `'pending'`, `'dispatched'`, `'failed'` |
-| `retry_count` | INTEGER | NOT NULL DEFAULT 0 | Retries consumed (max 10 before DLQ) |
-| `next_retry_at` | INTEGER | NOT NULL DEFAULT 0 | Epoch millisecond schedule timestamp |
-| `lease_until` | INTEGER | NOT NULL DEFAULT 0 | Lock lease expiry timestamp |
-| `last_error` | TEXT | NULLABLE | Last HTTP/transport error message |
-| `created_at` | INTEGER | NOT NULL | Epoch millisecond creation timestamp |
+### WhatsApp protocol stores
 
-Indexes:
-- `idx_outbox_poll` on `(status, next_retry_at)`
-- `idx_outbox_aggregate_seq` on `(session_id, aggregate_id, created_at)`
+The WhatsApp library maintains a separate protocol store for each session under `[sessions].dir`. These files hold authentication and cryptographic protocol state. Uwah treats them as library-owned data and does not use its SQLx repositories to query them.
 
----
+Back up the application database and protocol stores together if you need a recoverable installation. Protect both as sensitive data.
 
-### 2.3 `webhook_dlq` (Dead-Letter Queue)
-Quarantine table for exhausted or permanently rejected webhook events.
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `id` | TEXT | PRIMARY KEY | UUIDv7 event identifier |
-| `session_id` | TEXT | NOT NULL | Originating session ID |
-| `event_type` | TEXT | NOT NULL | Event topic name |
-| `payload` | TEXT | NOT NULL | Original JSON event body |
-| `error_message` | TEXT | NOT NULL | Reason for DLQ quarantine |
-| `retry_count` | INTEGER | NOT NULL | Number of retries attempted before DLQ |
-| `failed_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Timestamp when moved to DLQ |
+## Migration history and clean-install caveats
 
----
+Migrations are ordered by their timestamped filenames and applied by SQLx. Historical files `20261001000000_cascade_session_rename.sql` and `20261001020000_group_metadata.sql` are empty in this checkout. The outbox repair migration (`20261109000000_repair_outbox_schema.sql`) creates outbox and DLQ objects if they are missing, and the performance migration defines indexes.
 
-### 2.4 `group_metadata`
-Stores WhatsApp group settings and permissions.
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `session_id` | TEXT | PK, FK -> `sessions(id)` ON DELETE CASCADE | Owning session |
-| `group_jid` | TEXT | PK | WhatsApp Group JID (`...@g.us`) |
-| `description` | TEXT | NULLABLE | Group description body |
-| `description_id` | TEXT | NULLABLE | Optimistic concurrency token for descriptions |
-| `is_locked` | BOOLEAN | NOT NULL DEFAULT 0 | True if only admins can edit group metadata |
-| `is_announcement`| BOOLEAN | NOT NULL DEFAULT 0 | True if only admins can send messages |
-| `ephemeral_expiration`| INTEGER | NULLABLE | Disappearing message expiration timer (seconds) |
-| `membership_approval` | BOOLEAN | NOT NULL DEFAULT 0 | True if admin approval is required to join |
-| `member_add_mode` | TEXT | NULLABLE | Who can add members |
-| `member_link_mode`| TEXT | NULLABLE | Who can share invite links |
-| `creator_jid` | TEXT | NULLABLE | Group creator JID |
-| `parent_group_jid` | TEXT | NULLABLE | Parent community group JID if subgroup |
-| `size` | INTEGER | NULLABLE | Total group participant count |
-| `updated_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Last synchronized timestamp |
+Because some historical migrations are empty, the schema a fresh database receives may not match every design statement in older documents. Review the complete migration sequence before relying on cascade behavior or `group_metadata` being present. Do not edit a migration that may already have been applied: SQLx records checksums. Add a new migration for schema changes.
 
----
+## SQLite settings
 
-### 2.5 `media_cache`
-Stores metadata and deduplicated SHA-256 binary references.
-| Column | Type | Constraints | Description |
-| :--- | :--- | :--- | :--- |
-| `sha256` | TEXT | PRIMARY KEY | Plaintext binary file SHA-256 hex digest |
-| `disk_path` | TEXT | NOT NULL | Path of the cached file |
-| `mime_type` | TEXT | NOT NULL | MIME type (e.g. `image/jpeg`, `audio/ogg`) |
-| `file_size`| INTEGER | NOT NULL | Binary file size on disk |
-| `ref_count` | INTEGER | NOT NULL DEFAULT 1 | Number of logical references |
-| `last_accessed_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Last cache access used by pruning |
-| `created_at` | TIMESTAMP | NOT NULL DEFAULT CURRENT_TIMESTAMP | Ingestion timestamp |
+Pool initialization in `src/database/mod.rs` configures:
 
-### 2.6 Other gateway tables
+- Foreign-key enforcement.
+- Write-ahead logging (`WAL`) and `synchronous = NORMAL`.
+- A 30-second busy timeout.
+- A 64 MiB SQLite page cache, a 256 MiB memory-map limit, and in-memory temporary storage.
+- Incremental auto-vacuum mode.
 
-The initial migration also creates `chats`, `messages`, `contacts`, `group_participants` and `calls`. Their composite keys are session-scoped: for example, chats use `(session_id, jid)` and messages/calls use `(id, session_id)`. Foreign keys cascade session deletion; message media references use `ON DELETE SET NULL`.
+The process runs a passive WAL checkpoint and an incremental vacuum approximately every 30 minutes. These settings do not make SQLite a multi-writer database; workloads still serialize writes. Keep the database on a reliable local filesystem and monitor free disk space.
 
-The versioned SQL under `migrations/` is authoritative. The two historical files named for session-key cascade and group metadata are empty in this checkout, so those changes must not be assumed to exist in every database. `20261109000000_repair_outbox_schema.sql` additively creates `outbox_events`, `webhook_dlq`, and their indexes when absent. The performance-index migration is also versioned under `migrations/`. Review clean-install and upgrade behavior before relying on schema changes that are described only in roadmap or design documents.
+## Backup and restore
 
----
+Stop the gateway or use a SQLite-aware backup method that accounts for WAL files. Copying only the main database file while the gateway is active may omit committed data still present in the WAL. Preserve file permissions and back up the matching session protocol-store directory. Test restoration on a separate location before relying on a backup.
 
-## 3. SQLite Engine Pragma Tuning
-
-Configured during pool initialization in [`src/database/mod.rs`](../src/database/mod.rs):
-- `PRAGMA journal_mode = WAL;` (Concurrent readers and single writer without read locks)
-- `PRAGMA synchronous = NORMAL;` (High throughput durability balance)
-- `PRAGMA cache_size = -64000;` (64MB RAM page cache)
-- `PRAGMA mmap_size = 268435456;` (256MB memory-mapped I/O)
-- `PRAGMA temp_store = MEMORY;`
-- `PRAGMA auto_vacuum = INCREMENTAL;`
-- `PRAGMA busy_timeout = 30000;` (30-second contention backoff window)
-
-Migrations are applied automatically during startup with `sqlx::migrate!("./migrations")`. A background maintenance task runs a passive WAL checkpoint and incremental vacuum every 30 minutes.
+Do not place production data, credentials, or session stores in source control. The repository `.gitignore` covers the default local database and common local artifacts; custom paths must be protected by the operator.
